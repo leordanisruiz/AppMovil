@@ -1,0 +1,35 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      APP_NAME: ${APP_NAME:-AppMovil API}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      API_V1_PREFIX: ${API_V1_PREFIX:-/api/v1}
+      LOG_DIR: ${LOG_DIR:-/backend/logs}
+      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL con la conexion a Kactus en .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Define JWT_SECRET_KEY en .env}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      EXPO_PUSH_TOKEN_ENCRYPTION_KEY: ${EXPO_PUSH_TOKEN_ENCRYPTION_KEY:-}
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
+      EXPO_POLL_INTERVAL_SECONDS: ${EXPO_POLL_INTERVAL_SECONDS:-60}
+      EXPO_POLL_BATCH_SIZE: ${EXPO_POLL_BATCH_SIZE:-100}
+    volumes:
+      - ./logs:/backend/logs
+
+  push-worker:
+    build: .
+    profiles: ["push"]
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment:
+      LOG_DIR: ${LOG_DIR:-/backend/logs}
+      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL con la conexion a Kactus en .env}
+      EXPO_PUSH_TOKEN_ENCRYPTION_KEY: ${EXPO_PUSH_TOKEN_ENCRYPTION_KEY:-}
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
+      EXPO_POLL_INTERVAL_SECONDS: ${EXPO_POLL_INTERVAL_SECONDS:-60}
+      EXPO_POLL_BATCH_SIZE: ${EXPO_POLL_BATCH_SIZE:-100}
+    volumes:
+      - ./logs:/backend/logs
