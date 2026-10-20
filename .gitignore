@@ -1,7 +1,26 @@
+# Environment files and secrets
 .env
-.venv/
-venv/
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.p12
+*.jks
+*.mobileprovision
+
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.venv/
+venv/
 logs/
+
+# Node.js and Expo
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+*.tsbuildinfo
