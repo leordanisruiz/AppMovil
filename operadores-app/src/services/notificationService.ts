@@ -22,9 +22,17 @@ export async function showNewNoveltyNotification(
   await notifications.showNewNoveltyNotification(newNoveltyCount);
 }
 
+export async function syncAppBadge(pendingCount: number): Promise<void> {
+  if (Platform.OS === 'web') return;
+
+  const notifications = await import('./notificationService.native');
+  await notifications.syncAppBadge(pendingCount);
+}
+
 export function subscribeToNoveltyNavigation(
   onOpenNovedades: () => void,
   onNotificationReceived: () => void,
+  onOpenTasks: () => void,
 ): () => void {
   if (Platform.OS === 'web') return () => {};
 
@@ -37,6 +45,7 @@ export function subscribeToNoveltyNavigation(
         unsubscribe = notifications.subscribeToNoveltyNavigation(
           onOpenNovedades,
           onNotificationReceived,
+          onOpenTasks,
         );
       }
     })

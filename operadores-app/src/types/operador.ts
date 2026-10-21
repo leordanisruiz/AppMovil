@@ -6,4 +6,5 @@ export type Operador = {
   fechaIngreso: string | null;
   cargo: string | null;
   estadoEmpleado: string;
+  rolId: number | null;
 };

@@ -6,7 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.cors import CORSMiddleware
 
-from app.api.v1 import auth, novedades, operador
+from app.api.v1 import auth, novedades, operador, tareas
 from app.core import database
 from app.core.config import get_settings
 from app.core.logging_config import configure_logging
@@ -41,6 +41,11 @@ app.include_router(
     novedades.router,
     prefix=f"{settings.api_v1_prefix}/novedades",
     tags=["novedades"],
+)
+app.include_router(
+    tareas.router,
+    prefix=f"{settings.api_v1_prefix}/tareas",
+    tags=["tareas"],
 )
 
 

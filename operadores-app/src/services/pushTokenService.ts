@@ -17,7 +17,7 @@ export async function registerDeviceForPushNotifications(
   const permissionGranted = await requestNotificationPermission();
   if (!permissionGranted) {
     throw new Error(
-      'Permite las notificaciones en los ajustes del dispositivo para recibir avisos de novedades.',
+      'Permite las notificaciones en los ajustes del dispositivo para recibir avisos de novedades y tareas.',
     );
   }
 

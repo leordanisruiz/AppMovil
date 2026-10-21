@@ -108,6 +108,34 @@ class PushNotificationWorkerTests(unittest.TestCase):
             "HTTP_429",
         )
 
+    def test_task_assignment_notification_uses_task_payload(self) -> None:
+        token = "ExpoPushToken[device-token_123456789]"
+        encrypted_token = Fernet(self.encryption_key.encode("ascii")).encrypt(
+            token.encode("utf-8")
+        ).decode("ascii")
+        self.repository.try_acquire_poll_lock.return_value = False
+        self.repository.claim_pending.return_value = [
+            {
+                "id": 20,
+                "id_novedad": None,
+                "task_id": 55,
+                "tipo_tarea": "Capacitación",
+                "token_hash": "b" * 64,
+                "intentos": 1,
+                "token_ciphertext": encrypted_token,
+            }
+        ]
+        self.push_client.send_task_assignment.return_value = "ticket-task"
+
+        self.worker.run_once()
+
+        self.push_client.send_task_assignment.assert_called_once_with(
+            token,
+            task_id=55,
+            task_type="Capacitación",
+        )
+        self.repository.mark_sent.assert_called_once()
+
     def test_device_not_registered_receipt_deactivates_token(self) -> None:
         self.repository.try_acquire_poll_lock.return_value = False
         self.repository.claim_receipts.return_value = [

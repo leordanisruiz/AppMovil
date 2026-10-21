@@ -31,6 +31,7 @@ class AuthService:
         identificacion: str,
         password: str,
     ) -> LoginResponse:
+        role_id: int | None = None
         try:
             employee_record = self._operador_repository.get_by_identification(
                 db,
@@ -41,12 +42,16 @@ class AuthService:
                     if str(employee_record["Codigo"]).strip() != password:
                         employee_record = None
                 else:
-                    employee_record = self._authenticate_administrative_user(
+                    authenticated = self._authenticate_administrative_user(
                         db,
                         employee_record=employee_record,
                         identificacion=identificacion,
                         password=password,
                     )
+                    if authenticated is None:
+                        employee_record = None
+                    else:
+                        employee_record, role_id = authenticated
         except SQLAlchemyError as exc:
             self._raise_database_unavailable(exc)
 
@@ -58,7 +63,7 @@ class AuthService:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        employee = _build_employee_profile(employee_record)
+        employee = _build_employee_profile(employee_record, role_id=role_id)
         if employee.EstadoEmpleado != "A":
             logger.warning("Login rejected: employee is inactive in Kactus.")
             raise HTTPException(
@@ -86,7 +91,7 @@ class AuthService:
         employee_record: Mapping[str, Any],
         identificacion: str,
         password: str,
-    ) -> Mapping[str, Any] | None:
+    ) -> tuple[Mapping[str, Any], int | None] | None:
         usuario = self._usuario_app_repository.get_by_identity(
             db,
             tipo_documento=str(employee_record["TipoDocumento"]),
@@ -95,7 +100,7 @@ class AuthService:
 
         if usuario is None or not verify_password(password, usuario.password_hash):
             return None
-        return employee_record
+        return employee_record, usuario.rol_id
 
     @staticmethod
     def _raise_database_unavailable(exc: SQLAlchemyError) -> NoReturn:
@@ -111,6 +116,8 @@ class AuthService:
 
 def _build_employee_profile(
     employee_record: Mapping[str, Any],
+    *,
+    role_id: int | None = None,
 ) -> EmployeeProfile:
     return EmployeeProfile(
         Codigo=(
@@ -124,6 +131,7 @@ def _build_employee_profile(
         FechaIngreso=employee_record["FechaIngreso"],
         Cargo=employee_record["Cargo"],
         EstadoEmpleado=str(employee_record["EstadoEmpleado"]),
+        RolId=role_id,
     )
 
 

@@ -68,6 +68,7 @@ export function LoginScreen({ navigation }: LoginScreenProps) {
               value={identificacion}
             />
             <FormInput
+              keyboardType="number-pad"
               label="Contraseña"
               onChangeText={setPassword}
               onSubmitEditing={handleLogin}

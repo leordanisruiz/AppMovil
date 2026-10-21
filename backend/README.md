@@ -79,6 +79,23 @@ nulo. El cliente no debería guardar el código ni escribirlo en logs.
 Las demás rutas bajo `/api/v1` requieren
 `Authorization: Bearer <access_token>`. El login es público.
 
+### Seguimiento de tareas creadas
+
+Los usuarios activos con `rol_id` 1 (administración) o 2 (operación) pueden
+consultar exclusivamente las tareas que crearon:
+
+- `GET /api/v1/tareas/creadas`: lista de tareas creadas por la identidad
+  autenticada.
+- `GET /api/v1/tareas/creadas/{id}`: detalle, novedades relacionadas y
+  evidencias registradas.
+- `PATCH /api/v1/tareas/creadas/{id}/cerrar`: marca como `CERRADO` el estado de
+  una tarea
+  creada por el usuario autenticado.
+
+El cierre administrativo marca la tarea `CERRADO`. El operador asignado puede
+marcarla `COMPLETADA` después de cargar evidencias; esa acción muestra un aviso
+de que Operaciones validará la evidencia antes de cerrar la novedad en SICO.
+
 ## Configuración y ejecución
 
 1. Instalar dependencias: `pip install -r requirements.txt`.
@@ -93,20 +110,27 @@ Las demás rutas bajo `/api/v1` requieren
    `sql/002_add_usuario_app_id.sql`; migra la tabla existente al esquema
    `"DW_CONFIG"`, añade el consecutivo y mantiene la unicidad de tipo/número
    de identificación. Para notificaciones Expo, aplicar además
-   `sql/003_create_expo_push_notifications.sql`. Ejecutar los scripts con el
+   `sql/003_create_expo_push_notifications.sql`. Para habilitar tareas,
+   aplicar `sql/004_create_tareas_operador.sql` y luego
+   `sql/005_task_assignment_roles.sql` y `sql/006_add_closed_task_state.sql`.
+   Ejecutar los scripts con el
    proceso de despliegue/DBA; la API no aplica DDL al iniciar.
 5. Configurar `DATABASE_URL` para la instancia PostgreSQL que contiene
    `"DW_SUMA"."DimEmpleados"`, `"DW_SUMA"."FactNovedadesSico"` y
    `"DW_CONFIG".usuarios_app` y las tablas Expo. La cuenta runtime debe tener
    `USAGE` en los esquemas `"DW_SUMA"` y `"DW_CONFIG"`, `SELECT` en las tablas
    SUMA, `SELECT`/`INSERT` en `"DW_CONFIG".usuarios_app` y
-   `SELECT`/`INSERT`/`UPDATE` en las cuatro tablas `expo_push_*`; también
+   `SELECT`/`INSERT`/`UPDATE` en las tablas `expo_push_*`; también
    requiere `USAGE`/`SELECT` en la secuencia
    `"DW_CONFIG".expo_push_outbox_id_seq`. La creación inicial requiere permisos
    DDL para DBA. Codifique los caracteres reservados de la URL.
 6. Configurar `JWT_SECRET_KEY` con al menos 32 bytes aleatorios; por ejemplo:
    `python -c "import secrets; print(secrets.token_urlsafe(64))"`.
-7. Iniciar localmente: `uvicorn app.main:app --reload`.
+7. Para permitir conexiones desde un teléfono en la misma red Wi-Fi, iniciar
+   localmente con `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`.
+   Autorice el puerto TCP 8000 en el Firewall de Windows para la red privada.
+   La URL configurada en la app debe usar la IPv4 del computador, no
+   `localhost`.
 8. Para solicitudes desde el navegador, configure `CORS_ORIGINS` como una
    lista separada por comas de los orígenes exactos autorizados. El valor local
    predeterminado permite `http://localhost:8081` y
@@ -166,6 +190,89 @@ Se filtra por `"DW_SUMA"."FactNovedadesSico"."Codigo"` y se incluyen filas
 cuyo estado sea nulo, `PEOCESO` o `PROCESO`, según la consulta acordada. Si
 no hay novedades, `total` es `0` y `novedades` es una lista vacía.
 
+### Tareas asignadas y evidencias
+
+Las tareas las crea y asigna personal con rol administrativo/de operaciones.
+Antes de habilitar esta función, aplique `sql/004_create_tareas_operador.sql`
+y `sql/005_task_assignment_roles.sql`. La tabla queda en
+`"DW_OPERACIONAL".tareas_operador` y filtra `operador_id` por el código
+numérico (`Codigo`) del operador autenticado. El token del cliente no permite
+elegir otro operador.
+
+Endpoints autenticados:
+
+- `GET /api/v1/tareas/asignacion/operadores?buscar=...`: busca operadores
+  activos por código o identificación (roles 1 y 2).
+- `GET /api/v1/tareas/asignacion/operadores/{codigo}/novedades`: lista sus
+  novedades abiertas.
+- `GET /api/v1/tareas/asignacion/novedades/{id}`: busca una novedad abierta y
+  devuelve también el operador al que pertenece.
+- `GET /api/v1/tareas/asignacion/tipos`: lista los tipos activos.
+- `POST /api/v1/tareas/asignacion`: crea la tarea para un operador y una o
+  varias novedades abiertas.
+- `GET /api/v1/tareas`: lista las tareas asignadas al operador autenticado.
+- `GET /api/v1/tareas/{id}`: devuelve detalle y metadatos de evidencias.
+- `GET /api/v1/tareas/{id}/evidencias/{nombre}`: entrega un archivo solo si
+  pertenece a una tarea del operador autenticado.
+- `POST /api/v1/tareas/{id}/evidencias`: recibe archivos multipart en el campo
+  `files`. Acepta JPG, PNG, WebP, HEIC, MP4 y MOV; máximo 10 archivos y 100 MB
+  combinados por solicitud. Valida extensión, tipo declarado y firma básica
+  del archivo.
+- `PATCH /api/v1/tareas/{id}/estado`: permite pasar a `EN_PROCESO` o
+  `COMPLETADA`. Subir evidencia cambia automáticamente una tarea
+  `PENDIENTE` a `EN_PROCESO`; completarla exige al menos una evidencia y no
+  permite reabrirla.
+
+Las evidencias se guardan en archivos, nunca en PostgreSQL. Configure
+`EVIDENCIAS_PATH` con la raíz accesible por la cuenta del servidor; la API crea
+`EvidenciasAppMovil/{identificacion_operador}/` y escribe nombres únicos
+seguros. En ejecución directa sobre Windows, el valor de `.env` puede ser
+`EVIDENCIAS_PATH=\\172.20.10.32\web`. La cuenta del proceso necesita permisos
+de lectura/escritura sobre el recurso compartido.
+
+Docker corre Linux y no puede usar directamente una ruta UNC de Windows. Monte
+el recurso SMB en el host/container y configure, por ejemplo,
+`EVIDENCIAS_HOST_PATH=/ruta/montada/en/el/host` y
+`EVIDENCIAS_CONTAINER_PATH=/mnt/evidencias`; Compose monta esa raíz en la API.
+La ruta dentro del contenedor debe existir y tener permisos para el usuario
+del proceso.
+
+La migración de tareas agrega `rol_id` a `"DW_CONFIG".usuarios_app`: `1`
+corresponde a administración y `2` a operaciones. El valor queda nulo al
+registrar una cuenta y debe ser asignado por un administrador de base de datos.
+La API vuelve a consultar el rol en cada operación de asignación; el ocultamiento
+del menú en el cliente no es el control de acceso.
+
+Ejemplo para habilitar una cuenta administrativa en operaciones:
+
+```sql
+UPDATE "DW_CONFIG".usuarios_app
+SET rol_id = 2
+WHERE tipo_documento = 'CC'
+  AND identificacion = '<identificacion>';
+```
+
+`sql/005_task_assignment_roles.sql` crea `"DW_CONFIG".tipos_tareas` y carga
+Capacitación, Actividad recreativa y Exposición. La tabla de tareas usa su
+`id` identity como consecutivo y `novedades_ids` JSONB para relacionar una o
+varias novedades. El outbox Expo existente también recibe los avisos de tareas.
+La cuenta runtime requiere `USAGE` en `"DW_OPERACIONAL"` y
+`SELECT`/`INSERT`/`UPDATE` en `"DW_OPERACIONAL".tareas_operador`; además,
+`USAGE`/`SELECT` en la secuencia
+`"DW_OPERACIONAL".tareas_operador_id_seq`,
+`SELECT` en `"DW_CONFIG".tipos_tareas`, `SELECT`/`UPDATE` en
+`"DW_CONFIG".usuarios_app` y `SELECT`/`INSERT`/`UPDATE` en las tablas Expo
+afectadas. Mantenga los permisos DDL en la cuenta DBA separada. La aplicación
+no aplica migraciones al iniciar.
+
+La pantalla **Asignación de tareas** está disponible para cuentas con `rol_id`
+1 o 2. Permite buscar operadores por código/identificación o una novedad por
+ID, asociar una o varias novedades abiertas, elegir el tipo de tarea y crearla
+en estado `PENDIENTE`. Si el operador tiene tokens Expo activos, el envío se
+encola en `expo_push_outbox`; el proceso worker del perfil `push` debe estar
+ejecutándose para entregarlo. Los datos de la notificación abren la sección
+Tareas de la app.
+
 ### Registro de dispositivos y notificaciones Expo
 
 El cliente obtiene el token mediante `expo-notifications` y usa los endpoints
@@ -220,7 +327,7 @@ Configure en API y worker:
   dispositivos vuelvan a registrar sus tokens.
 - `EXPO_ACCESS_TOKEN`: opcional; agréguelo si el proyecto Expo exige
   autenticación de servidor a Expo.
-- `EXPO_POLL_INTERVAL_SECONDS`: intervalo del worker; predeterminado `60`.
+- `EXPO_POLL_INTERVAL_SECONDS`: intervalo del worker; predeterminado `5`.
 - `EXPO_POLL_BATCH_SIZE`: máximo de entregas por ciclo, de `1` a `100`;
   predeterminado `100`.
 

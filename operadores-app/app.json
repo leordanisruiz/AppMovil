@@ -13,12 +13,38 @@
           "color": "#FF0000",
           "defaultChannel": "novedades"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Portal Operadores necesita acceso a tus fotos para adjuntarlas como evidencia.",
+          "cameraPermission": "Portal Operadores necesita acceso a la cámara para tomar evidencias.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-video",
+      "expo-sharing",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Portal Operadores necesita acceso a tu galería para guardar las evidencias descargadas.",
+          "savePhotosPermission": "Portal Operadores guarda las evidencias descargadas en tu galería."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
       ]
     ],
     "ios": {
       "supportsTablet": true
     },
     "android": {
+      "package": "com.sumaaplicaciones.portaloperadores",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

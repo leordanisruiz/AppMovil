@@ -58,6 +58,7 @@ class EmployeeProfile(BaseModel):
     FechaIngreso: date | datetime | None
     Cargo: str | None
     EstadoEmpleado: str
+    RolId: int | None = None
 
 
 class LoginResponse(BaseModel):

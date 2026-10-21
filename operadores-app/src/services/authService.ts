@@ -17,6 +17,7 @@ type EmployeeProfileResponse = {
   FechaIngreso: string | null;
   Cargo: string | null;
   EstadoEmpleado: string;
+  RolId: number | null;
 };
 
 type LoginResponse = {
@@ -40,6 +41,7 @@ function toOperator(employee: EmployeeProfileResponse): Operador {
     fechaIngreso: employee.FechaIngreso,
     cargo: employee.Cargo,
     estadoEmpleado: employee.EstadoEmpleado,
+    rolId: employee.RolId,
   };
 }
 
@@ -75,6 +77,13 @@ export function getApiErrorMessage(
     const message = error.response?.data?.message;
     if (typeof message === 'string') {
       return message;
+    }
+    if (!error.response && error.code === 'ERR_NETWORK') {
+      return (
+        'No fue posible conectar con el servidor. Confirma que el teléfono y ' +
+        'el computador estén en la misma red Wi-Fi, que la API esté activa y ' +
+        'que EXPO_PUBLIC_API_URL use la IP local del computador, no localhost.'
+      );
     }
     return error.message || fallback;
   }

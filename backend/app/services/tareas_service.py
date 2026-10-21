@@ -1,0 +1,953 @@
+import logging
+import mimetypes
+import os
+import re
+import tempfile
+from collections.abc import Mapping
+from datetime import date
+from pathlib import Path
+from typing import Any, NoReturn
+from uuid import uuid4
+
+from fastapi import HTTPException, UploadFile, status
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.core.config import get_settings
+from app.repositories.operador_repository import OperadorRepository
+from app.repositories.tareas_repository import TareasRepository
+from app.repositories.usuario_app_repository import UsuarioAppRepository
+from app.schemas.tarea import (
+    Evidencia,
+    NovedadAsignacion,
+    OperadorAsignacion,
+    TareaAsignacionResponse,
+    TareaCreateRequest,
+    TareaResponse,
+    TipoTareaResponse,
+)
+
+logger = logging.getLogger(__name__)
+
+MAX_EVIDENCE_FILES = 10
+MAX_EVIDENCE_SIZE_BYTES = 100 * 1024 * 1024
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+ALLOWED_MEDIA_TYPES = {
+    "image/jpeg": (".jpg", "image"),
+    "image/png": (".png", "image"),
+    "image/webp": (".webp", "image"),
+    "image/heic": (".heic", "image"),
+    "image/heif": (".heif", "image"),
+    "video/mp4": (".mp4", "video"),
+    "video/quicktime": (".mov", "video"),
+}
+ALLOWED_EVIDENCE_EXTENSIONS = frozenset(
+    extension for extension, _ in ALLOWED_MEDIA_TYPES.values()
+)
+_EVIDENCE_FILENAME_PREFIX = re.compile(r"^[0-9a-f]{8}_")
+
+
+class TareasService:
+    def __init__(
+        self,
+        tareas_repository: TareasRepository,
+        operador_repository: OperadorRepository,
+        usuario_app_repository: UsuarioAppRepository | None = None,
+    ) -> None:
+        self._tareas_repository = tareas_repository
+        self._operador_repository = operador_repository
+        self._usuario_app_repository = (
+            usuario_app_repository or UsuarioAppRepository()
+        )
+
+    def search_operators_for_assignment(
+        self,
+        db: Session,
+        *,
+        search: str,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> list[OperadorAsignacion]:
+        self._require_assignment_role(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        if len(search.strip()) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Escribe al menos dos caracteres para buscar.",
+            )
+        try:
+            rows = self._tareas_repository.search_operators(db, search=search)
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("operator search", exc)
+        return [OperadorAsignacion.model_validate(dict(row)) for row in rows]
+
+    def list_operator_novelties_for_assignment(
+        self,
+        db: Session,
+        *,
+        codigo_operador: int,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> list[NovedadAsignacion]:
+        self._require_assignment_role(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        try:
+            operator = self._tareas_repository.get_operator_by_code(
+                db,
+                codigo_operador=codigo_operador,
+            )
+            if operator is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No se encontró un operador activo con ese código.",
+                )
+            rows = self._tareas_repository.list_open_novelties(
+                db,
+                codigo_operador=codigo_operador,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("operator novelty search", exc)
+        return [
+            NovedadAsignacion.model_validate(dict(row))
+            for row in rows
+        ]
+
+    def get_novelty_for_assignment(
+        self,
+        db: Session,
+        *,
+        novedad_id: int,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> NovedadAsignacion:
+        self._require_assignment_role(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        try:
+            row = self._tareas_repository.get_novelty(
+                db,
+                novedad_id=novedad_id,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("novelty search", exc)
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No se encontró una novedad abierta con ese ID.",
+            )
+        return NovedadAsignacion.model_validate(dict(row))
+
+    def list_assignment_task_types(
+        self,
+        db: Session,
+        *,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> list[TipoTareaResponse]:
+        self._require_assignment_role(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        try:
+            rows = self._tareas_repository.list_task_types(db)
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("task type lookup", exc)
+        return [TipoTareaResponse.model_validate(dict(row)) for row in rows]
+
+    def create_task_for_operator(
+        self,
+        db: Session,
+        *,
+        request: TareaCreateRequest,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> TareaAsignacionResponse:
+        self._require_assignment_role(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        try:
+            operator = self._tareas_repository.get_operator_by_code(
+                db,
+                codigo_operador=request.operador_id,
+            )
+            if operator is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No se encontró un operador activo con ese código.",
+                )
+
+            novelty_rows = self._tareas_repository.get_open_novelties_by_ids(
+                db,
+                novedad_ids=request.novedades_ids,
+            )
+            selected_novelties = {
+                int(row["id_novedad"]): int(row["codigo"])
+                for row in novelty_rows
+            }
+            if (
+                set(selected_novelties) != set(request.novedades_ids)
+                or any(
+                    code != request.operador_id
+                    for code in selected_novelties.values()
+                )
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        "Todas las novedades deben estar abiertas y "
+                        "pertenecer al operador seleccionado."
+                    ),
+                )
+
+            task_type = self._tareas_repository.get_task_type_name(
+                db,
+                tipo_tarea_id=request.tipo_tarea_id,
+            )
+            if task_type is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Selecciona un tipo de tarea válido.",
+                )
+
+            task, notification_count = self._tareas_repository.create_task(
+                db,
+                operador_id=request.operador_id,
+                novedades_ids=request.novedades_ids,
+                tipo_tarea=task_type,
+                descripcion=request.descripcion,
+                usuario_creacion=f"{tipo_documento}-{identificacion}",
+            )
+        except HTTPException:
+            raise
+        except SQLAlchemyError as exc:
+            db.rollback()
+            self._raise_database_unavailable("task assignment", exc)
+
+        logger.info(
+            "Task %s assigned to operator %s; %s push notifications queued.",
+            task["id"],
+            request.operador_id,
+            notification_count,
+        )
+        return TareaAsignacionResponse(
+            tarea=_to_task_response(task),
+            notificaciones_programadas=notification_count,
+        )
+
+    def _require_assignment_role(
+        self,
+        db: Session,
+        *,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> int:
+        try:
+            user = self._usuario_app_repository.get_by_identity(
+                db,
+                tipo_documento=tipo_documento,
+                identificacion=identificacion,
+            )
+            employee = self._operador_repository.get_by_identity(
+                db,
+                tipo_documento=tipo_documento,
+                identificacion=identificacion,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("assignment role lookup", exc)
+
+        role_id = user.rol_id if user is not None else None
+        if (
+            employee is None
+            or employee.get("EstadoEmpleado") != "A"
+            or role_id not in (1, 2)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos para asignar tareas.",
+            )
+        return role_id
+
+    def list_for_operator(
+        self,
+        db: Session,
+        *,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> list[TareaResponse]:
+        operador_id = self._get_authenticated_operator_id(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        try:
+            rows = self._tareas_repository.list_by_operator(
+                db,
+                operador_id=operador_id,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("list", exc)
+
+        return [_to_task_response(row) for row in rows]
+
+    def list_created_by_user(
+        self,
+        db: Session,
+        *,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> list[TareaResponse]:
+        self._require_assignment_role(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        creator = f"{tipo_documento}-{identificacion}"
+        try:
+            rows = self._tareas_repository.list_by_creator(
+                db,
+                usuario_creacion=creator,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("created task list", exc)
+        return [_to_task_response(row) for row in rows]
+
+    def get_created_by_user(
+        self,
+        db: Session,
+        *,
+        tarea_id: int,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> TareaResponse:
+        self._require_assignment_role(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        creator = f"{tipo_documento}-{identificacion}"
+        try:
+            row = self._tareas_repository.get_by_creator(
+                db,
+                tarea_id=tarea_id,
+                usuario_creacion=creator,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("created task read", exc)
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La tarea no existe o no fue creada por este usuario.",
+            )
+        return _to_task_response(row)
+
+    def close_created_by_user(
+        self,
+        db: Session,
+        *,
+        tarea_id: int,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> TareaResponse:
+        self._require_assignment_role(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        creator = f"{tipo_documento}-{identificacion}"
+        try:
+            current = self._tareas_repository.get_by_creator(
+                db,
+                tarea_id=tarea_id,
+                usuario_creacion=creator,
+            )
+            if current is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="La tarea no existe o no fue creada por este usuario.",
+                )
+            if current["estado"] == "CERRADO":
+                return _to_task_response(current)
+            updated = self._tareas_repository.close_created_task(
+                db,
+                tarea_id=tarea_id,
+                usuario_creacion=creator,
+            )
+        except HTTPException:
+            raise
+        except SQLAlchemyError as exc:
+            db.rollback()
+            self._raise_database_unavailable("created task close", exc)
+
+        if updated is None:
+            try:
+                latest = self._tareas_repository.get_by_creator(
+                    db,
+                    tarea_id=tarea_id,
+                    usuario_creacion=creator,
+                )
+            except SQLAlchemyError as exc:
+                self._raise_database_unavailable("created task close verification", exc)
+            if latest is not None and latest["estado"] == "CERRADO":
+                return _to_task_response(latest)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La tarea no existe o no fue creada por este usuario.",
+            )
+        logger.info(
+            "Task %s closed by creator %s.",
+            tarea_id,
+            creator,
+        )
+        return _to_task_response(updated)
+
+    def get_for_operator(
+        self,
+        db: Session,
+        *,
+        tarea_id: int,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> TareaResponse:
+        operador_id = self._get_authenticated_operator_id(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        row = self._get_task_row(
+            db,
+            tarea_id=tarea_id,
+            operador_id=operador_id,
+        )
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La tarea no existe o no está asignada a este operador.",
+            )
+        return _to_task_response(row)
+
+    def upload_evidence(
+        self,
+        db: Session,
+        *,
+        tarea_id: int,
+        tipo_documento: str,
+        identificacion: str,
+        files: list[UploadFile],
+    ) -> tuple[TareaResponse, int]:
+        operador_id = self._get_authenticated_operator_id(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        current_task = self._get_task_row(
+            db,
+            tarea_id=tarea_id,
+            operador_id=operador_id,
+        )
+        if current_task is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La tarea no existe o no está asignada a este operador.",
+            )
+        if current_task["estado"] in {"COMPLETADA", "CERRADO"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No se pueden agregar evidencias a una tarea cerrada o completada.",
+            )
+        if not files:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Debe adjuntar al menos una evidencia.",
+            )
+        if len(files) > MAX_EVIDENCE_FILES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Puede adjuntar máximo {MAX_EVIDENCE_FILES} archivos por envío.",
+            )
+
+        evidence_directory = _get_operator_evidence_directory(identificacion)
+        staged_paths: list[Path] = []
+        final_paths: list[Path] = []
+        evidence_records: list[dict[str, str]] = []
+        total_bytes = 0
+
+        try:
+            evidence_directory.mkdir(parents=True, exist_ok=True)
+            for upload in files:
+                suffix, content_type, media_type = _validate_upload(upload)
+                original_name = Path(upload.filename or f"evidencia{suffix}").name
+                safe_name = re.sub(r"[^\w.-]", "_", original_name)[:80]
+                filename = f"{uuid4().hex[:8]}_{safe_name or f'evidencia{suffix}'}"
+                temporary_path = _new_temp_path(evidence_directory)
+                staged_paths.append(temporary_path)
+                file_size = _write_upload(upload, temporary_path)
+                _verify_file_signature(temporary_path, content_type)
+                total_bytes += file_size
+                if total_bytes > MAX_EVIDENCE_SIZE_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="El tamaño total de las evidencias supera 100 MB.",
+                    )
+
+                final_path = evidence_directory / filename
+                os.replace(temporary_path, final_path)
+                staged_paths.remove(temporary_path)
+                final_paths.append(final_path)
+                evidence_records.append(
+                    {
+                        "nombre": filename,
+                        "ruta": (
+                            f"/EvidenciasAppMovil/{identificacion}/{filename}"
+                        ),
+                        "fecha": date.today().isoformat(),
+                        "tipo": media_type,
+                    }
+                )
+
+            try:
+                row = self._tareas_repository.append_evidences(
+                    db,
+                    tarea_id=tarea_id,
+                    operador_id=operador_id,
+                    evidencias=evidence_records,
+                )
+            except SQLAlchemyError as exc:
+                db.rollback()
+                self._raise_database_unavailable("upload", exc)
+
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="La tarea cambió de estado. Actualice la información e intente de nuevo.",
+                )
+
+        except HTTPException:
+            _remove_files(staged_paths + final_paths)
+            raise
+        except OSError as exc:
+            _remove_files(staged_paths + final_paths)
+            logger.error(
+                "Evidence storage operation failed (%s).",
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No fue posible guardar las evidencias en el servidor.",
+            ) from None
+
+        logger.info(
+            "Evidence uploaded for task %s (%s files).",
+            tarea_id,
+            len(evidence_records),
+        )
+        return _to_task_response(row), len(evidence_records)
+
+    def update_state(
+        self,
+        db: Session,
+        *,
+        tarea_id: int,
+        estado: str,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> TareaResponse:
+        operador_id = self._get_authenticated_operator_id(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        task = self._get_task_row(
+            db,
+            tarea_id=tarea_id,
+            operador_id=operador_id,
+        )
+        if task is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La tarea no existe o no está asignada a este operador.",
+            )
+
+        current_state = str(task["estado"])
+        if current_state == estado:
+            return _to_task_response(task)
+        if current_state in {"COMPLETADA", "CERRADO"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Una tarea cerrada o completada no puede cambiar de estado.",
+            )
+        try:
+            app_user = self._usuario_app_repository.get_by_identity(
+                db,
+                tipo_documento=tipo_documento,
+                identificacion=identificacion,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("task completion role lookup", exc)
+        if app_user is not None and app_user.rol_id in (1, 2):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo el operador asignado puede actualizar el estado de esta tarea.",
+            )
+        if estado == "COMPLETADA":
+            evidences = task["evidencias"] or []
+            if not evidences:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Adjunte al menos una evidencia antes de completar la tarea.",
+                )
+            if current_state != "EN_PROCESO":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="La tarea debe estar en proceso antes de completarse.",
+                )
+        elif estado != "EN_PROCESO":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="El cambio de estado solicitado no está permitido.",
+            )
+
+        try:
+            updated = self._tareas_repository.update_state(
+                db,
+                tarea_id=tarea_id,
+                operador_id=operador_id,
+                estado=estado,
+            )
+        except SQLAlchemyError as exc:
+            db.rollback()
+            self._raise_database_unavailable("update state", exc)
+
+        if updated is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La tarea no existe o no está asignada a este operador.",
+            )
+        logger.info("Task %s state updated to %s.", tarea_id, estado)
+        return _to_task_response(updated)
+
+    def get_evidence_path(
+        self,
+        db: Session,
+        *,
+        tarea_id: int,
+        nombre: str,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> tuple[Path, str]:
+        """Autoriza y resuelve la ruta física de una evidencia.
+
+        Devuelve la ruta y el nombre sugerido de descarga. El operador asignado
+        y los usuarios administrativos (ADMIN u OPERACION) que crearon la tarea
+        pueden consultar la misma evidencia.
+        """
+        if Path(nombre).name != nombre:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La evidencia no existe.",
+            )
+        if Path(nombre).suffix.lower() not in ALLOWED_EVIDENCE_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La evidencia no existe.",
+            )
+
+        try:
+            app_user = self._usuario_app_repository.get_by_identity(
+                db,
+                tipo_documento=tipo_documento,
+                identificacion=identificacion,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("evidence role lookup", exc)
+
+        if app_user is not None and app_user.rol_id in (1, 2):
+            self._require_assignment_role(
+                db,
+                tipo_documento=tipo_documento,
+                identificacion=identificacion,
+            )
+            try:
+                task = self._tareas_repository.get_by_creator(
+                    db,
+                    tarea_id=tarea_id,
+                    usuario_creacion=f"{tipo_documento}-{identificacion}",
+                )
+            except SQLAlchemyError as exc:
+                self._raise_database_unavailable("evidence task read", exc)
+            if task is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="La evidencia no existe.",
+                )
+            operator_identificacion = self._get_operator_identificacion(
+                db,
+                codigo_operador=task["operador_id"],
+            )
+        else:
+            operador_id = self._get_authenticated_operator_id(
+                db,
+                tipo_documento=tipo_documento,
+                identificacion=identificacion,
+            )
+            task = self._get_task_row(
+                db,
+                tarea_id=tarea_id,
+                operador_id=operador_id,
+            )
+            operator_identificacion = identificacion
+
+        if task is None or operator_identificacion is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La evidencia no existe.",
+            )
+        if not any(
+            evidence.get("nombre") == nombre
+            for evidence in task["evidencias"] or []
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La evidencia no existe.",
+            )
+
+        evidence_directory = _get_operator_evidence_directory(
+            operator_identificacion
+        )
+        path = (evidence_directory / nombre).resolve()
+        if not path.is_relative_to(evidence_directory.resolve()) or not path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La evidencia no existe.",
+            )
+        return path, _evidence_download_name(nombre)
+
+    def _get_task_row(
+        self,
+        db: Session,
+        *,
+        tarea_id: int,
+        operador_id: int,
+    ) -> Mapping[str, Any] | None:
+        try:
+            return self._tareas_repository.get_by_id(
+                db,
+                tarea_id=tarea_id,
+                operador_id=operador_id,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("read", exc)
+
+    def _get_operator_identificacion(
+        self,
+        db: Session,
+        *,
+        codigo_operador: Any,
+    ) -> str | None:
+        """Resuelve la identificación del operador dueño de las evidencias."""
+        try:
+            codigo = int(codigo_operador)
+        except (TypeError, ValueError):
+            return None
+        try:
+            operator = self._tareas_repository.get_operator_by_code(
+                db,
+                codigo_operador=codigo,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("evidence operator lookup", exc)
+        if operator is None:
+            return None
+        operator_identificacion = operator.get("identificacion")
+        if operator_identificacion is None:
+            return None
+        return str(operator_identificacion)
+
+    def _get_authenticated_operator_id(
+        self,
+        db: Session,
+        *,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> int:
+        try:
+            operator = self._operador_repository.get_by_identity(
+                db,
+                tipo_documento=tipo_documento,
+                identificacion=identificacion,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("operator lookup", exc)
+
+        if not operator or operator.get("EstadoEmpleado") != "A":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo los operadores activos pueden consultar tareas.",
+            )
+        operator_code = operator.get("Codigo")
+        code_text = str(operator_code).strip() if operator_code is not None else ""
+        if not code_text.isascii() or not code_text.isdecimal():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="El usuario autenticado no tiene un código de operador válido.",
+            )
+        operator_id = int(code_text)
+        if operator_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="El usuario autenticado no tiene un código de operador válido.",
+            )
+        return operator_id
+
+    @staticmethod
+    def _raise_database_unavailable(operation: str, exc: SQLAlchemyError) -> NoReturn:
+        logger.error(
+            "Task database operation %s failed (%s).",
+            operation,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No fue posible consultar o actualizar las tareas en este momento.",
+        ) from None
+
+
+def _to_task_response(row: Mapping[str, Any]) -> TareaResponse:
+    return TareaResponse.model_validate(dict(row))
+
+
+def _evidence_download_name(nombre: str) -> str:
+    """Quita el prefijo aleatorio que se agrega al almacenar la evidencia."""
+    return _EVIDENCE_FILENAME_PREFIX.sub("", nombre) or nombre
+
+
+def _get_operator_evidence_directory(identificacion: str) -> Path:
+    if not re.fullmatch(r"[0-9]{1,64}", identificacion):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="La identificación del usuario autenticado no es válida.",
+        )
+
+    configured_root = get_settings().evidencias_path.strip()
+    if not configured_root:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El almacenamiento de evidencias no está configurado.",
+        )
+    if os.name != "nt" and configured_root.startswith("\\\\"):
+        logger.error(
+            "Evidence storage uses a Windows UNC path on a non-Windows host."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Configure EVIDENCIAS_PATH con la ruta montada del recurso "
+                "compartido para este servidor."
+            ),
+        )
+
+    return (
+        Path(configured_root)
+        / "EvidenciasAppMovil"
+        / identificacion
+    )
+
+
+def _validate_upload(upload: UploadFile) -> tuple[str, str, str]:
+    media_type = (upload.content_type or "").lower()
+    expected = ALLOWED_MEDIA_TYPES.get(media_type)
+    extension = Path(upload.filename or "").suffix.lower()
+    if expected is None or expected[0] != extension:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=(
+                "Formato no permitido. Use imágenes JPG, PNG, WebP o HEIC y "
+                "videos MP4 o MOV."
+            ),
+        )
+    return expected[0], media_type, expected[1]
+
+
+def _new_temp_path(directory: Path) -> Path:
+    descriptor, name = tempfile.mkstemp(
+        prefix=".upload-",
+        suffix=".tmp",
+        dir=directory,
+    )
+    os.close(descriptor)
+    path = Path(name)
+    path.unlink()
+    return path
+
+
+def _write_upload(upload: UploadFile, destination: Path) -> int:
+    size = 0
+    with destination.open("xb") as target:
+        while chunk := upload.file.read(UPLOAD_CHUNK_SIZE):
+            size += len(chunk)
+            if size > MAX_EVIDENCE_SIZE_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="Cada evidencia debe pesar máximo 100 MB.",
+                )
+            target.write(chunk)
+    if size == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No se pueden subir archivos vacíos.",
+        )
+    return size
+
+
+def _verify_file_signature(path: Path, media_type: str) -> None:
+    with path.open("rb") as uploaded_file:
+        signature = uploaded_file.read(16)
+
+    is_valid = False
+    if media_type == "image/jpeg":
+        is_valid = signature.startswith(b"\xff\xd8\xff")
+    elif media_type == "image/png":
+        is_valid = signature.startswith(b"\x89PNG\r\n\x1a\n")
+    elif media_type == "image/webp":
+        is_valid = signature.startswith(b"RIFF") and signature[8:12] == b"WEBP"
+    elif media_type in {"video/mp4", "video/quicktime"}:
+        is_valid = len(signature) >= 12 and signature[4:8] == b"ftyp"
+    elif media_type in {"image/heic", "image/heif"}:
+        is_valid = (
+            len(signature) >= 12
+            and signature[4:8] == b"ftyp"
+            and signature[8:12] in {b"heic", b"heix", b"mif1", b"msf1"}
+        )
+
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="El contenido del archivo no coincide con su formato declarado.",
+        )
+
+
+def _remove_files(paths: list[Path]) -> None:
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.error(
+                "Could not clean up a temporary evidence file (%s).",
+                type(exc).__name__,
+            )
+
+
+tareas_service = TareasService(
+    TareasRepository(),
+    OperadorRepository(),
+)

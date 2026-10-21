@@ -30,6 +30,7 @@ class UsuarioAppRepository:
             tipo_documento=tipo_documento,
             identificacion=identificacion,
             password_hash=password_hash,
+            rol_id=None,
         )
         db.add(usuario)
         db.commit()

@@ -37,6 +37,32 @@ class ExpoPushServiceTests(unittest.TestCase):
         self.assertEqual(payload["title"], "Nueva novedad")
         self.assertNotIn("token", payload["body"].lower())
 
+    def test_sends_task_assignment_with_task_navigation_data(self) -> None:
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read.return_value = json.dumps(
+            {"data": {"status": "ok", "id": "task-ticket"}}
+        ).encode("utf-8")
+
+        with patch(
+            "app.services.expo_push_service.urlopen",
+            return_value=response,
+        ) as urlopen:
+            ticket_id = ExpoPushClient().send_task_assignment(
+                "ExpoPushToken[device-token_123456789]",
+                task_id=55,
+                task_type="Capacitación",
+            )
+
+        self.assertEqual(ticket_id, "task-ticket")
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(payload["title"], "Nueva tarea asignada")
+        self.assertEqual(
+            payload["data"],
+            {"tipo": "tarea", "id_tarea": 55},
+        )
+
     def test_marks_unregistered_token_for_deactivation(self) -> None:
         response = Mock()
         response.__enter__ = Mock(return_value=response)

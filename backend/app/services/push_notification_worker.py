@@ -55,13 +55,15 @@ class PushNotificationWorker:
                 await asyncio.to_thread(self.run_once)
             except SQLAlchemyError as exc:
                 logger.error(
-                    "Expo notification worker database operation failed (%s).",
+                    "Expo notification worker database operation failed (%s): %s",
                     type(exc).__name__,
+                    getattr(exc, "orig", exc),
                 )
             except (ExpoRetryableError, OSError, ValueError) as exc:
                 logger.error(
-                    "Expo notification worker cycle failed (%s).",
+                    "Expo notification worker cycle failed (%s): %s",
                     type(exc).__name__,
+                    exc,
                 )
             await asyncio.sleep(self._interval_seconds)
 
@@ -117,7 +119,8 @@ class PushNotificationWorker:
         session_factory: sessionmaker[Session],
     ) -> None:
         delivery_id = delivery["id"]
-        novelty_id = delivery["id_novedad"]
+        novelty_id = delivery.get("id_novedad")
+        task_id = delivery.get("task_id")
         token_hash = delivery["token_hash"]
         attempt = delivery["intentos"]
         encrypted_token = delivery["token_ciphertext"]
@@ -140,7 +143,14 @@ class PushNotificationWorker:
             return
 
         try:
-            ticket_id = self._push_client.send(token, novelty_id)
+            if task_id is not None:
+                ticket_id = self._push_client.send_task_assignment(
+                    token,
+                    task_id=task_id,
+                    task_type=delivery.get("tipo_tarea", "actividad asignada"),
+                )
+            else:
+                ticket_id = self._push_client.send(token, novelty_id)
         except ExpoInvalidPushToken as exc:
             self._finish_failed(
                 delivery_id,

@@ -16,9 +16,10 @@ class Settings:
     jwt_secret_key: str | None
     jwt_algorithm: str
     access_token_expire_minutes: int
+    evidencias_path: str = r"\\172.20.10.32\web"
     expo_push_token_encryption_key: str | None = None
     expo_access_token: str | None = None
-    expo_poll_interval_seconds: int = 60
+    expo_poll_interval_seconds: int = 5
     expo_poll_batch_size: int = 100
     cors_origins: tuple[str, ...] = (
         "http://localhost:8081",
@@ -46,12 +47,16 @@ def get_settings() -> Settings:
         access_token_expire_minutes=int(
             os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
         ),
+        evidencias_path=os.getenv(
+            "EVIDENCIAS_PATH",
+            r"\\172.20.10.32\web",
+        ),
         expo_push_token_encryption_key=(
             os.getenv("EXPO_PUSH_TOKEN_ENCRYPTION_KEY") or None
         ),
         expo_access_token=os.getenv("EXPO_ACCESS_TOKEN") or None,
         expo_poll_interval_seconds=int(
-            os.getenv("EXPO_POLL_INTERVAL_SECONDS", "60")
+            os.getenv("EXPO_POLL_INTERVAL_SECONDS", "5")
         ),
         expo_poll_batch_size=int(os.getenv("EXPO_POLL_BATCH_SIZE", "100")),
     )

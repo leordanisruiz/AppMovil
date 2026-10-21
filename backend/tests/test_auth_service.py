@@ -141,6 +141,7 @@ class AuthServiceTests(unittest.TestCase):
     def test_administrative_user_can_login_with_hashed_password(self) -> None:
         repository = AdministrativeOperadorRepository()
         usuario_repository = StubUsuarioAppRepository(hash_password("12345678"))
+        usuario_repository.usuario.rol_id = 2
         service = AuthService(repository, usuario_repository)
 
         response = service.login(
@@ -151,6 +152,7 @@ class AuthServiceTests(unittest.TestCase):
 
         self.assertIsNone(response.empleado.Codigo)
         self.assertEqual(response.empleado.Identificacion, "5843452")
+        self.assertEqual(response.empleado.RolId, 2)
 
     def test_unknown_credentials_return_generic_unauthorized(self) -> None:
         service = AuthService(StubOperadorRepository(record=None))

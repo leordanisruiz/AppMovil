@@ -2,16 +2,45 @@ import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 
+export const NOVELTY_CHANNEL_ID = 'novedades';
+export const TASK_CHANNEL_ID = 'tareas';
+
+type AndroidChannel = {
+  id: string;
+  name: string;
+  importance: Notifications.AndroidImportance;
+  vibrationPattern: number[];
+  lightColor: string;
+};
+
+const ANDROID_CHANNELS: AndroidChannel[] = [
+  {
+    id: NOVELTY_CHANNEL_ID,
+    name: 'Novedades',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#FF0000',
+  },
+  {
+    id: TASK_CHANNEL_ID,
+    name: 'Tareas asignadas',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#FF0000',
+  },
+];
+
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
+    const data = notification.request.content.data;
     const isForegroundFallback =
-      notification.request.content.data?.source === 'foreground-poll';
+      data?.source === 'foreground-poll' || data?.tipo === 'tarea';
     const shouldPresent =
       AppState.currentState !== 'active' || isForegroundFallback;
 
     return {
       shouldPlaySound: shouldPresent,
-      shouldSetBadge: false,
+      shouldSetBadge: true,
       shouldShowBanner: shouldPresent,
       shouldShowList: shouldPresent,
     };
@@ -20,12 +49,16 @@ Notifications.setNotificationHandler({
 
 export async function requestNotificationPermission(): Promise<boolean> {
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('novedades', {
-      name: 'Novedades',
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#FF0000',
-    });
+    await Promise.all(
+      ANDROID_CHANNELS.map((channel) =>
+        Notifications.setNotificationChannelAsync(channel.id, {
+          name: channel.name,
+          importance: channel.importance,
+          vibrationPattern: channel.vibrationPattern,
+          lightColor: channel.lightColor,
+        }),
+      ),
+    );
   }
 
   const currentPermissions = await Notifications.getPermissionsAsync();
@@ -35,6 +68,12 @@ export async function requestNotificationPermission(): Promise<boolean> {
 
   const requestedPermissions = await Notifications.requestPermissionsAsync();
   return requestedPermissions.granted;
+}
+
+export async function syncAppBadge(pendingCount: number): Promise<void> {
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
+
+  await Notifications.setBadgeCountAsync(Math.max(0, pendingCount));
 }
 
 export async function getExpoPushToken(): Promise<string | null> {
@@ -72,11 +111,17 @@ export async function showNewNoveltyNotification(
 export function subscribeToNoveltyNavigation(
   onOpenNovedades: () => void,
   onNotificationReceived: () => void,
+  onOpenTasks: () => void,
 ): () => void {
   const lastResponse = Notifications.getLastNotificationResponse();
   const lastData = lastResponse?.notification.request.content.data;
   if (isNoveltyNotification(lastData)) {
+    onNotificationReceived();
     onOpenNovedades();
+    Notifications.clearLastNotificationResponse();
+  } else if (isTaskNotification(lastData)) {
+    onNotificationReceived();
+    onOpenTasks();
     Notifications.clearLastNotificationResponse();
   }
 
@@ -86,7 +131,12 @@ export function subscribeToNoveltyNavigation(
   const responseListener =
     Notifications.addNotificationResponseReceivedListener((response) => {
       if (isNoveltyNotification(response.notification.request.content.data)) {
+        onNotificationReceived();
         onOpenNovedades();
+        Notifications.clearLastNotificationResponse();
+      } else if (isTaskNotification(response.notification.request.content.data)) {
+        onNotificationReceived();
+        onOpenTasks();
         Notifications.clearLastNotificationResponse();
       }
     });
@@ -103,5 +153,14 @@ function isNoveltyNotification(data: unknown): boolean {
     data !== null &&
     'tipo' in data &&
     data.tipo === 'novedad'
+  );
+}
+
+function isTaskNotification(data: unknown): boolean {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'tipo' in data &&
+    data.tipo === 'tarea'
   );
 }

@@ -21,7 +21,10 @@ function isOperator(value: unknown): value is Operador {
     (typeof operator.fechaIngreso === 'string' ||
       operator.fechaIngreso === null) &&
     (typeof operator.cargo === 'string' || operator.cargo === null) &&
-    typeof operator.estadoEmpleado === 'string'
+    typeof operator.estadoEmpleado === 'string' &&
+    (typeof operator.rolId === 'number' ||
+      operator.rolId === null ||
+      operator.rolId === undefined)
   );
 }
 
@@ -49,7 +52,9 @@ export const tokenStorage = {
     }
 
     const operator: unknown = JSON.parse(value);
-    return isOperator(operator) ? operator : null;
+    return isOperator(operator)
+      ? { ...operator, rolId: operator.rolId ?? null }
+      : null;
   },
 
   async saveSession(token: string, operator: Operador): Promise<void> {

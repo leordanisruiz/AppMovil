@@ -83,13 +83,15 @@ _POLL_NEW_NOVELTIES = text(
         CURRENT_TIMESTAMP
     FROM newly_seen
     JOIN "DW_SUMA"."DimEmpleados" AS employee
-      ON employee."Codigo" = newly_seen.codigo_operador
+      ON employee."Codigo"::text = newly_seen.codigo_operador::text
      AND employee."IndicadorActividad" = 'A'
     JOIN "DW_CONFIG".expo_push_tokens AS device
-      ON device.tipo_documento = employee."TipoDocumento"
-     AND device.identificacion = employee."Identificacion"
+      ON device.tipo_documento = employee."TipoDocumento"::text
+     AND device.identificacion = employee."Identificacion"::text
      AND device.activo = TRUE
-    ON CONFLICT (id_novedad, token_hash) DO NOTHING
+    ON CONFLICT (id_novedad, token_hash)
+        WHERE id_novedad IS NOT NULL
+    DO NOTHING
     """
 )
 
@@ -113,7 +115,7 @@ _IS_INITIALIZED = text(
 _CLAIM_OUTBOX = text(
     """
     WITH candidates AS (
-        SELECT delivery.id
+        SELECT delivery.id, delivery.task_id, delivery.token_hash
         FROM "DW_CONFIG".expo_push_outbox AS delivery
         JOIN "DW_CONFIG".expo_push_tokens AS device
           ON device.token_hash = delivery.token_hash
@@ -135,16 +137,22 @@ _CLAIM_OUTBOX = text(
         intentos = delivery.intentos + 1,
         lease_until = CURRENT_TIMESTAMP + INTERVAL '30 minutes',
         claim_id = :claim_id
-    FROM candidates, "DW_CONFIG".expo_push_tokens AS device
+    FROM candidates
+    JOIN "DW_CONFIG".expo_push_tokens AS device
+      ON device.token_hash = candidates.token_hash
+     AND device.activo = TRUE
+    LEFT JOIN "DW_OPERACIONAL".tareas_operador AS task
+      ON task.id = candidates.task_id
     WHERE delivery.id = candidates.id
-      AND device.token_hash = delivery.token_hash
       AND delivery.expo_ticket_id IS NULL
     RETURNING
         delivery.id,
         delivery.id_novedad,
+        delivery.task_id,
         delivery.token_hash,
         delivery.intentos,
-        device.token_ciphertext
+        device.token_ciphertext,
+        task.tipo_tarea
     """
 )
 

@@ -8,6 +8,9 @@ from app.core.config import get_settings
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 EXPO_RECEIPTS_URL = "https://exp.host/--/api/v2/push/getReceipts"
 
+NOVELTY_CHANNEL_ID = "novedades"
+TASK_CHANNEL_ID = "tareas"
+
 
 class ExpoRetryableError(Exception):
     def __init__(self, code: str) -> None:
@@ -31,17 +34,48 @@ class ExpoReceiptPending(ExpoRetryableError):
 
 class ExpoPushClient:
     def send(self, token: str, novelty_id: int) -> str:
+        return self._send_message(
+            token,
+            title="Nueva novedad",
+            body="Tienes una nueva novedad abierta.",
+            data={"tipo": "novedad", "id_novedad": novelty_id},
+            channel_id=NOVELTY_CHANNEL_ID,
+        )
+
+    def send_task_assignment(
+        self,
+        token: str,
+        *,
+        task_id: int,
+        task_type: str,
+    ) -> str:
+        return self._send_message(
+            token,
+            title="Nueva tarea asignada",
+            body=f"Tienes una nueva tarea: {task_type}.",
+            data={"tipo": "tarea", "id_tarea": task_id},
+            channel_id=TASK_CHANNEL_ID,
+        )
+
+    def _send_message(
+        self,
+        token: str,
+        *,
+        title: str,
+        body: str,
+        data: dict[str, Any],
+        channel_id: str,
+    ) -> str:
         payload = self._post(
             EXPO_PUSH_URL,
             {
                 "to": token,
-                "title": "Nueva novedad",
-                "body": "Tienes una nueva novedad abierta.",
-                "data": {
-                    "tipo": "novedad",
-                    "id_novedad": novelty_id,
-                },
+                "title": title,
+                "body": body,
+                "data": data,
                 "sound": "default",
+                "priority": "high",
+                "channelId": channel_id,
             },
         )
         ticket = payload.get("data")

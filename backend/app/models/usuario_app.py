@@ -1,6 +1,15 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Identity, String, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    Identity,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -13,6 +22,10 @@ class UsuarioApp(Base):
             "tipo_documento",
             "identificacion",
             name="uq_usuarios_app_documento_identificacion",
+        ),
+        CheckConstraint(
+            "rol_id IS NULL OR rol_id IN (1, 2)",
+            name="ck_usuarios_app_rol_id",
         ),
         {"schema": "DW_CONFIG"},
     )
@@ -31,6 +44,7 @@ class UsuarioApp(Base):
         nullable=False,
     )
     password_hash: Mapped[str] = mapped_column(String(60), nullable=False)
+    rol_id: Mapped[int | None] = mapped_column(SmallInteger)
     fecha_creacion: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

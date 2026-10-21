@@ -3,6 +3,7 @@ import { isAxiosError } from 'axios';
 import {
   ActivityIndicator,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,11 +13,17 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { queryClient } from '../api/queryClient';
 import { SectionHeading } from '../components/SectionHeading';
+import { TasksSection } from '../components/TasksSection';
+import { TaskAssignmentSection } from '../components/TaskAssignmentSection';
+import { CreatedTasksSection } from '../components/CreatedTasksSection';
 import { getApiErrorMessage } from '../services/authService';
 import { useNovedades } from '../hooks/useNovedades';
+import { useTareas } from '../hooks/useTareas';
+import { useTareasCreadas } from '../hooks/useTareasCreadas';
 import {
   showNewNoveltyNotification,
   subscribeToNoveltyNavigation,
+  syncAppBadge,
 } from '../services/notificationService';
 import { registerDeviceForPushNotifications } from '../services/pushTokenService';
 import type { Novedad } from '../types/novedad';
@@ -24,29 +31,58 @@ import { useAuth } from '../store/AuthProvider';
 import { colors, radius, spacing, typography } from '../theme';
 import { getFirstName } from '../utils/formatName';
 
-type PortalSection = 'inicio' | 'novedades' | 'pendientes' | 'mis-datos';
+type PortalSection =
+  | 'inicio'
+  | 'novedades'
+  | 'tareas'
+  | 'tareas-creadas'
+  | 'asignacion-tareas'
+  | 'mis-datos';
+type WelcomeNoticeContent = {
+  title: string;
+  message: string;
+  intro?: string;
+  noveltyCount?: number;
+  taskCount?: number;
+};
 
 const menuItems: {
   label: string;
   value: PortalSection;
   description: string;
+  icon?: string;
 }[] = [
   { label: 'Inicio', value: 'inicio', description: 'Resumen del portal' },
   { label: 'Novedades', value: 'novedades', description: 'Comunicados y avisos' },
-  { label: 'Pendientes', value: 'pendientes', description: 'Novedades abiertas' },
+  { label: 'Tareas', value: 'tareas', description: 'Actividades asignadas', icon: '☑' },
+  {
+    label: 'Tareas creadas',
+    value: 'tareas-creadas',
+    description: 'Seguimiento a tus asignaciones',
+    icon: '▤',
+  },
+  {
+    label: 'Asignación de tareas',
+    value: 'asignacion-tareas',
+    description: 'Crear actividades para operadores',
+    icon: '＋',
+  },
   { label: 'Mis datos', value: 'mis-datos', description: 'Perfil del operador' },
 ];
 
 const sectionTitles: Record<PortalSection, string> = {
   inicio: 'Inicio',
   novedades: 'Novedades',
-  pendientes: 'Pendientes',
+  tareas: 'Tareas',
+  'tareas-creadas': 'Tareas creadas',
+  'asignacion-tareas': 'Asignación de tareas',
   'mis-datos': 'Mis datos',
 };
 
 export function HomeScreen() {
   const { operator, logout, expireSession } = useAuth();
   const operatorCode = operator?.codigo?.trim() || null;
+  const canAssignTasks = operator?.rolId === 1 || operator?.rolId === 2;
   const {
     data: novedades,
     isLoading,
@@ -54,6 +90,9 @@ export function HomeScreen() {
     refetch,
     isRefetching,
   } = useNovedades(operatorCode);
+  const tareasQuery = useTareas(Boolean(operatorCode));
+  const createdTasksQuery = useTareasCreadas(canAssignTasks);
+  const [isWelcomeNoticeDismissed, setIsWelcomeNoticeDismissed] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [pushSetupError, setPushSetupError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -65,6 +104,27 @@ export function HomeScreen() {
   const firstName = operator?.nombreCompleto
     ? getFirstName(operator.nombreCompleto)
     : 'Operador';
+  const welcomeNotice: WelcomeNoticeContent | null = !operatorCode
+    ? {
+        title: 'Bienvenido a la app de SUMA',
+        message: 'Donde encontraras a la mano las soluciones necesarias.',
+      }
+    : !isLoading && novedades && novedades.total > 0
+      ? {
+          title: 'Bienvenido a la app de SUMA para Operadores',
+          intro: 'Le contamos que cuenta con',
+          message:
+            'Por favor, acercarse a Operaciones en el horario de atención: lunes a viernes de 7:00 am a 5:00 pm. Recuerda resolver tus novedades.',
+          noveltyCount: novedades.total,
+          taskCount: tareasQuery.data?.length,
+        }
+      : !isLoading && novedades?.total === 0
+        ? {
+            title: 'Bienvenido a la app de SUMA para Operadores',
+            message: 'Te felicitamos por tu buen comportamiento, no tienes novedades.',
+            taskCount: tareasQuery.data?.length,
+          }
+        : null;
 
   useEffect(() => {
     if (!operatorCode) return undefined;
@@ -139,18 +199,39 @@ export function HomeScreen() {
   }, [novedades, operatorCode]);
 
   useEffect(() => {
+    if (!operatorCode) return;
+
+    const pendingCount =
+      (tareasQuery.data?.length ?? 0) + (novedades?.total ?? 0);
+
+    void syncAppBadge(pendingCount).catch((error: unknown) => {
+      console.error('No se pudo actualizar el contador del icono:', error);
+    });
+  }, [novedades?.total, operatorCode, tareasQuery.data?.length]);
+
+  useEffect(() => {
     const openNovedades = () => {
       setActiveSection('novedades');
       setIsMenuOpen(false);
     };
-    const refreshNovedades = () => {
+    const refreshHomeData = () => {
       if (operatorCode) {
         void queryClient.invalidateQueries({
           queryKey: ['novedades', operatorCode],
         });
       }
+      void queryClient.invalidateQueries({ queryKey: ['tareas'] });
+      void queryClient.invalidateQueries({ queryKey: ['tareas-creadas'] });
     };
-    return subscribeToNoveltyNavigation(openNovedades, refreshNovedades);
+    const openTasks = () => {
+      setActiveSection('tareas');
+      setIsMenuOpen(false);
+    };
+    return subscribeToNoveltyNavigation(
+      openNovedades,
+      refreshHomeData,
+      openTasks,
+    );
   }, [operatorCode]);
 
   const handleLogout = async () => {
@@ -217,6 +298,77 @@ export function HomeScreen() {
             <Text style={styles.pageTitle}>{sectionTitles[activeSection]}</Text>
           </View>
 
+          <Modal
+            animationType="fade"
+            onRequestClose={() => setIsWelcomeNoticeDismissed(true)}
+            statusBarTranslucent
+            transparent
+            visible={welcomeNotice !== null && !isWelcomeNoticeDismissed}
+          >
+            <View style={styles.welcomeModalBackdrop}>
+              <View style={styles.welcomeNotice}>
+                <View style={styles.welcomeNoticeAccent} />
+                <View style={styles.welcomeNoticeHeader}>
+                  <View style={styles.welcomeNoticeIcon}>
+                    <Text style={styles.welcomeNoticeIconText}>!</Text>
+                  </View>
+                  <Pressable
+                    accessibilityLabel="Cerrar mensaje de bienvenida"
+                    accessibilityRole="button"
+                    onPress={() => setIsWelcomeNoticeDismissed(true)}
+                    style={styles.welcomeNoticeClose}
+                  >
+                    <Text style={styles.welcomeNoticeCloseText}>×</Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.welcomeNoticeEyebrow}>MENSAJE DE BIENVENIDA</Text>
+                <Text style={styles.welcomeNoticeTitle}>{welcomeNotice?.title}</Text>
+                {welcomeNotice?.intro ? (
+                  <Text style={styles.welcomeNoticeText}>{welcomeNotice.intro}</Text>
+                ) : null}
+                {welcomeNotice?.noveltyCount !== undefined ||
+                welcomeNotice?.taskCount !== undefined ? (
+                  <View style={styles.welcomeNoticeCounts}>
+                    {welcomeNotice.noveltyCount !== undefined ? (
+                      <View style={styles.welcomeNoticeCount}>
+                        <Text style={styles.welcomeNoticeCountNumber}>
+                          {welcomeNotice.noveltyCount}
+                        </Text>
+                        <Text style={styles.welcomeNoticeCountLabel}>
+                          novedades abiertas
+                        </Text>
+                      </View>
+                    ) : null}
+                    {welcomeNotice.taskCount !== undefined ? (
+                      <View style={styles.welcomeNoticeCount}>
+                        <Text style={styles.welcomeNoticeCountNumber}>
+                          {welcomeNotice.taskCount}
+                        </Text>
+                        <Text style={styles.welcomeNoticeCountLabel}>
+                          {welcomeNotice.taskCount === 1
+                            ? 'Tarea asignada'
+                            : 'Tareas asignadas'}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+                <Text style={styles.welcomeNoticeText}>
+                  {welcomeNotice?.message}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setIsWelcomeNoticeDismissed(true)}
+                  style={styles.welcomeNoticeButton}
+                >
+                  <Text style={styles.welcomeNoticeButtonText}>
+                    Entendido, continuar
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </Modal>
+
           {activeSection === 'inicio' ? (
             <View style={styles.sectionContent}>
               <View style={styles.welcomeCard}>
@@ -238,32 +390,59 @@ export function HomeScreen() {
                 supportingText="Consulta rápidamente tu información más importante."
               />
               <View style={styles.summaryRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => selectSection('pendientes')}
-                  style={styles.summaryCard}
-                >
-                  <View style={styles.summaryIcon}>
-                    <Text style={styles.summaryIconText}>!</Text>
-                  </View>
-                  <Text style={styles.summaryLabel}>Pendientes</Text>
-                  <Text style={styles.summaryValue}>
-                    {novedades?.total ?? '—'}
-                  </Text>
-                  <Text style={styles.summaryFootnote}>Novedades abiertas</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => selectSection('novedades')}
-                  style={styles.summaryCard}
-                >
-                  <View style={styles.summaryIcon}>
-                    <Text style={styles.summaryIconText}>↗</Text>
-                  </View>
-                  <Text style={styles.summaryLabel}>Novedades</Text>
-                  <Text style={styles.summaryValue}>{novedades?.total ?? '—'}</Text>
-                  <Text style={styles.summaryFootnote}>Ver todos los avisos</Text>
-                </Pressable>
+                {canAssignTasks ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => selectSection('tareas-creadas')}
+                    style={styles.summaryCard}
+                  >
+                    <View style={styles.summaryIcon}>
+                      <Text style={styles.summaryIconText}>▤</Text>
+                    </View>
+                    <Text style={styles.summaryLabel}>Tareas creadas</Text>
+                    <Text style={styles.summaryValue}>
+                      {createdTasksQuery.data?.length ?? '—'}
+                    </Text>
+                    <Text style={styles.summaryFootnote}>
+                      Seguimiento de asignaciones
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => selectSection('tareas')}
+                      style={styles.summaryCard}
+                    >
+                      <View style={styles.summaryIcon}>
+                        <Text style={styles.summaryIconText}>☑</Text>
+                      </View>
+                      <Text style={styles.summaryLabel}>Tareas</Text>
+                      <Text style={styles.summaryValue}>
+                        {tareasQuery.data?.length ?? '—'}
+                      </Text>
+                      <Text style={styles.summaryFootnote}>
+                        Actividades asignadas
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => selectSection('novedades')}
+                      style={styles.summaryCard}
+                    >
+                      <View style={styles.summaryIcon}>
+                        <Text style={styles.summaryIconText}>↗</Text>
+                      </View>
+                      <Text style={styles.summaryLabel}>Novedades</Text>
+                      <Text style={styles.summaryValue}>
+                        {novedades?.total ?? '—'}
+                      </Text>
+                      <Text style={styles.summaryFootnote}>
+                        Ver todos los avisos
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
 
               <Pressable
@@ -331,47 +510,6 @@ export function HomeScreen() {
             </View>
           ) : null}
 
-          {activeSection === 'pendientes' ? (
-            <View style={styles.sectionContent}>
-              <SectionHeading
-                title="Novedades pendientes"
-                supportingText="Aquí se muestran las novedades abiertas reportadas para tu código de operador."
-              />
-              <View style={styles.newsOverview}>
-                <View>
-                  <Text style={styles.newsOverviewLabel}>TOTAL ABIERTO</Text>
-                  <Text style={styles.newsOverviewCount}>
-                    {novedades?.total ?? '—'}
-                  </Text>
-                </View>
-              </View>
-              {!operatorCode ? (
-                <NovedadesNoAplica />
-              ) : isLoading ? (
-                <ActivityIndicator color={colors.primary} style={styles.feedback} />
-              ) : isError ? (
-                <View style={styles.feedbackCard}>
-                  <Text style={styles.feedbackText}>
-                    No fue posible cargar las novedades pendientes.
-                  </Text>
-                  <Pressable accessibilityRole="button" onPress={() => void refetch()}>
-                    <Text style={styles.retryText}>Reintentar</Text>
-                  </Pressable>
-                </View>
-              ) : novedades?.novedades.length ? (
-                <NovedadesTable rows={novedades.novedades} />
-              ) : (
-                <View style={styles.feedbackCard}>
-                  <Text style={styles.emptyTitle}>Sin pendientes</Text>
-                  <Text style={styles.feedbackText}>
-                    No tienes novedades abiertas en este momento.
-                  </Text>
-                </View>
-              )}
-              {isRefetching ? <ActivityIndicator color={colors.primary} /> : null}
-            </View>
-          ) : null}
-
           {activeSection === 'mis-datos' ? (
             <View style={styles.sectionContent}>
               <View style={styles.profileHero}>
@@ -429,6 +567,16 @@ export function HomeScreen() {
             </View>
           ) : null}
 
+          {activeSection === 'tareas' ? (
+            <TasksSection operatorCode={operatorCode} />
+          ) : null}
+          {activeSection === 'tareas-creadas' && canAssignTasks ? (
+            <CreatedTasksSection />
+          ) : null}
+          {activeSection === 'asignacion-tareas' && canAssignTasks ? (
+            <TaskAssignmentSection />
+          ) : null}
+
           {logoutError ? <Text style={styles.logoutError}>{logoutError}</Text> : null}
           <Text style={styles.footer}>Portal Operadores · Uso corporativo</Text>
         </ScrollView>
@@ -456,7 +604,13 @@ export function HomeScreen() {
               </View>
 
               <Text style={styles.menuSectionLabel}>NAVEGACIÓN</Text>
-              {menuItems.map((item) => (
+              {menuItems
+                .filter(
+                  (item) =>
+                    (item.value !== 'asignacion-tareas' || canAssignTasks) &&
+                    (item.value !== 'tareas-creadas' || canAssignTasks),
+                )
+                .map((item) => (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ selected: activeSection === item.value }}
@@ -468,25 +622,40 @@ export function HomeScreen() {
                   ]}
                 >
                   <View style={styles.menuItemCopy}>
-                    <Text
-                      style={[
-                        styles.menuItemText,
-                        activeSection === item.value && styles.menuItemTextActive,
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
+                    <View style={styles.menuItemTitleRow}>
+                      {item.icon ? (
+                        <Text
+                          style={[
+                            styles.menuItemIcon,
+                            activeSection === item.value && styles.menuItemTextActive,
+                          ]}
+                        >
+                          {item.icon}
+                        </Text>
+                      ) : null}
+                      <Text
+                        style={[
+                          styles.menuItemText,
+                          activeSection === item.value && styles.menuItemTextActive,
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                    </View>
                     <Text style={styles.menuItemDescription}>{item.description}</Text>
                   </View>
-                  {(item.value === 'novedades' ||
-                    item.value === 'pendientes') &&
-                  novedades?.total ? (
+                  {(item.value === 'novedades' && novedades?.total) ||
+                  (item.value === 'tareas' && tareasQuery.data?.length) ? (
                     <View style={styles.menuBadge}>
-                      <Text style={styles.menuBadgeText}>{novedades.total}</Text>
+                      <Text style={styles.menuBadgeText}>
+                        {item.value === 'novedades'
+                          ? novedades?.total
+                          : tareasQuery.data?.length}
+                      </Text>
                     </View>
                   ) : null}
                 </Pressable>
-              ))}
+                ))}
 
               <View style={styles.sidebarOperator}>
                 <View style={styles.sidebarAvatar}>
@@ -526,39 +695,125 @@ function ProfileRow({ label, value }: { label: string; value: string }) {
 }
 
 function NovedadesTable({ rows }: { rows: Novedad[] }) {
+  const pageSize = 5;
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(currentPage, pageCount);
+  const startIndex = (page - 1) * pageSize;
+  const pageRows = rows.slice(startIndex, startIndex + pageSize);
+
   return (
     <View style={styles.tableCard}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={styles.tableContainer}>
-          <View style={styles.tableHeaderRow}>
-            <Text style={[styles.tableHeaderCell, styles.idColumn]}>ID</Text>
-            <Text style={[styles.tableHeaderCell, styles.typeColumn]}>Tipo</Text>
-            <Text style={[styles.tableHeaderCell, styles.descriptionColumn]}>
-              Descripción
-            </Text>
-            <Text style={[styles.tableHeaderCell, styles.statusColumn]}>Estado</Text>
-          </View>
-          {rows.map((novedad) => (
-            <View key={novedad.IdNovedad} style={styles.tableRow}>
-              <Text style={[styles.tableCell, styles.idColumn]}>
+      <View style={styles.tableContainer}>
+        <View style={styles.tableHeaderRow}>
+          <Text style={[styles.tableHeaderCell, styles.idColumn]}>ID</Text>
+          <Text style={[styles.tableHeaderCell, styles.dateColumn]}>Fecha</Text>
+          <Text style={[styles.tableHeaderCell, styles.statusColumn]}>Estado</Text>
+        </View>
+        {pageRows.map((novedad, index) => {
+          const status = novedad.Estado?.trim() || 'Sin estado';
+          const isOpenStatus = /^(ABIERTO|ABIERTA|EN PROCESO|PROCESO)$/i.test(status);
+
+          return (
+            <View
+              key={novedad.IdNovedad}
+              style={[styles.tableRow, index % 2 === 1 && styles.tableRowAlternate]}
+            >
+              <Text style={[styles.tableCell, styles.idColumn, styles.idCell]}>
                 {novedad.IdNovedad}
               </Text>
-              <Text style={[styles.tableCell, styles.typeColumn]}>
-                {novedad.TipoNovedad ?? '—'}
-              </Text>
-              <Text style={[styles.tableCell, styles.descriptionColumn]}>
-                {novedad.Descripcion ?? '—'}
+              <Text style={[styles.tableCell, styles.dateColumn]}>
+                {formatNoveltyDate(novedad.FechaNovedad)}
               </Text>
               <View style={[styles.statusColumn, styles.statusCell]}>
-                <View style={styles.statusDot} />
-                <Text style={styles.statusText}>{novedad.Estado ?? 'Sin estado'}</Text>
+                <View
+                  style={[
+                    styles.statusPill,
+                    isOpenStatus && styles.statusPillOpen,
+                  ]}
+                >
+                  <View
+                    style={[styles.statusDot, isOpenStatus && styles.statusDotOpen]}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.statusText, isOpenStatus && styles.statusTextOpen]}
+                  >
+                    {status}
+                  </Text>
+                </View>
               </View>
             </View>
-          ))}
+          );
+        })}
+        <View style={styles.pagination}>
+          <Text style={styles.paginationSummary}>
+            {startIndex + 1}–{Math.min(startIndex + pageSize, rows.length)} de {rows.length}
+          </Text>
+          <View style={styles.paginationControls}>
+            <Pressable
+              accessibilityLabel="Página anterior"
+              accessibilityRole="button"
+              accessibilityState={{ disabled: page <= 1 }}
+              disabled={page <= 1}
+              onPress={() => setCurrentPage(page - 1)}
+              style={[styles.paginationButton, page <= 1 && styles.paginationButtonDisabled]}
+            >
+              <Text
+                style={[
+                  styles.paginationButtonText,
+                  page <= 1 && styles.paginationButtonTextDisabled,
+                ]}
+              >
+                ‹
+              </Text>
+            </Pressable>
+            <Text style={styles.paginationPage}>
+              {page} / {pageCount}
+            </Text>
+            <Pressable
+              accessibilityLabel="Página siguiente"
+              accessibilityRole="button"
+              accessibilityState={{ disabled: page >= pageCount }}
+              disabled={page >= pageCount}
+              onPress={() => setCurrentPage(page + 1)}
+              style={[
+                styles.paginationButton,
+                page >= pageCount && styles.paginationButtonDisabled,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.paginationButtonText,
+                  page >= pageCount && styles.paginationButtonTextDisabled,
+                ]}
+              >
+                ›
+              </Text>
+            </Pressable>
+          </View>
         </View>
-      </ScrollView>
+      </View>
     </View>
   );
+}
+
+function formatNoveltyDate(value: string | null): string {
+  if (!value) return '—';
+
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (isoDate) {
+    return `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}`;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat('es-CO', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date);
 }
 
 function NovedadesNoAplica() {
@@ -655,6 +910,121 @@ const styles = StyleSheet.create({
   pageTitle: {
     color: colors.text,
     fontSize: typography.display,
+    fontWeight: '800',
+  },
+  welcomeNotice: {
+    backgroundColor: colors.white,
+    borderRadius: 18,
+    gap: spacing.medium,
+    overflow: 'hidden',
+    padding: spacing.large,
+    width: '100%',
+    maxWidth: 380,
+    elevation: 16,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+  },
+  welcomeModalBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(36, 25, 25, 0.68)',
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.medium,
+  },
+  welcomeNoticeAccent: {
+    backgroundColor: colors.primary,
+    height: 6,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  welcomeNoticeHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  welcomeNoticeIcon: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.pill,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  welcomeNoticeIconText: {
+    color: colors.primary,
+    fontSize: typography.body,
+    fontWeight: '800',
+  },
+  welcomeNoticeEyebrow: {
+    color: colors.primary,
+    fontSize: typography.overline,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+  },
+  welcomeNoticeTitle: {
+    color: '#241F20',
+    fontSize: 17,
+    fontWeight: '800',
+    lineHeight: 23,
+  },
+  welcomeNoticeClose: {
+    alignItems: 'center',
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  welcomeNoticeCloseText: {
+    color: '#A18E8E',
+    fontSize: 24,
+    lineHeight: 28,
+  },
+  welcomeNoticeCounts: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.small,
+  },
+  welcomeNoticeCount: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0F0',
+    borderColor: '#FFD5D5',
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.small,
+    paddingHorizontal: spacing.small,
+    paddingVertical: spacing.xsmall,
+  },
+  welcomeNoticeCountNumber: {
+    color: colors.primary,
+    fontSize: typography.heading,
+    fontWeight: '900',
+  },
+  welcomeNoticeCountLabel: {
+    color: '#271F1F',
+    fontSize: typography.small,
+    fontWeight: '700',
+  },
+  welcomeNoticeText: {
+    color: '#706565',
+    fontSize: typography.small,
+    lineHeight: 20,
+  },
+  welcomeNoticeButton: {
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: radius.medium,
+    justifyContent: 'center',
+    minHeight: 44,
+    marginTop: spacing.xsmall,
+  },
+  welcomeNoticeButtonText: {
+    color: colors.white,
+    fontSize: typography.small,
     fontWeight: '800',
   },
   sectionContent: {
@@ -840,31 +1210,35 @@ const styles = StyleSheet.create({
   tableCard: {
     backgroundColor: colors.white,
     borderColor: colors.border,
-    borderRadius: radius.medium,
+    borderRadius: radius.large,
     borderWidth: 1,
     overflow: 'hidden',
   },
   tableContainer: {
-    padding: spacing.small,
+    padding: spacing.medium,
   },
   tableHeaderRow: {
-    backgroundColor: colors.navy,
-    borderRadius: radius.small,
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.medium,
     flexDirection: 'row',
     overflow: 'hidden',
   },
   tableHeaderCell: {
-    color: colors.white,
+    color: colors.primary,
     fontSize: typography.small,
-    fontWeight: '700',
+    fontWeight: '800',
     paddingHorizontal: spacing.small,
-    paddingVertical: spacing.medium,
+    paddingVertical: spacing.small,
   },
   tableRow: {
-    alignItems: 'stretch',
+    alignItems: 'center',
     borderBottomColor: colors.border,
     borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
+    minHeight: 54,
+  },
+  tableRowAlternate: {
+    backgroundColor: '#FFFAFA',
   },
   tableCell: {
     color: colors.text,
@@ -873,36 +1247,97 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.small,
     paddingVertical: spacing.medium,
   },
+  idCell: {
+    fontWeight: '700',
+  },
   idColumn: {
-    width: 92,
+    flex: 0.9,
+    minWidth: 68,
   },
-  typeColumn: {
-    width: 130,
-  },
-  descriptionColumn: {
-    width: 260,
+  dateColumn: {
+    flex: 1,
+    minWidth: 78,
   },
   statusColumn: {
-    width: 112,
+    flex: 1.1,
+    minWidth: 90,
   },
   statusCell: {
     alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.xsmall,
     paddingHorizontal: spacing.small,
   },
-  statusDot: {
-    backgroundColor: colors.success,
+  statusPill: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFF0F0',
     borderRadius: radius.pill,
-    height: 8,
-    width: 8,
+    flexDirection: 'row',
+    gap: spacing.xsmall,
+    maxWidth: '100%',
+    paddingHorizontal: spacing.small,
+    paddingVertical: spacing.xsmall,
   },
-  pendingDot: {
-    backgroundColor: colors.warning,
+  statusPillOpen: {
+    backgroundColor: '#E8F5EC',
+  },
+  statusDot: {
+    backgroundColor: colors.primary,
+    borderRadius: radius.pill,
+    height: 7,
+    width: 7,
+  },
+  statusDotOpen: {
+    backgroundColor: colors.success,
   },
   statusText: {
+    color: colors.text,
+    flexShrink: 1,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  statusTextOpen: {
+    color: colors.success,
+  },
+  pagination: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.xsmall,
+    paddingTop: spacing.medium,
+  },
+  paginationSummary: {
     color: colors.textSecondary,
     fontSize: typography.small,
+  },
+  paginationControls: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.small,
+  },
+  paginationButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.small,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  paginationButtonDisabled: {
+    backgroundColor: '#F5F1F1',
+  },
+  paginationButtonText: {
+    color: colors.primary,
+    fontSize: 24,
+    fontWeight: '700',
+    lineHeight: 28,
+  },
+  paginationButtonTextDisabled: {
+    color: colors.textMuted,
+  },
+  paginationPage: {
+    color: colors.text,
+    fontSize: typography.small,
+    fontWeight: '700',
   },
   profileHero: {
     alignItems: 'center',
@@ -1068,6 +1503,16 @@ const styles = StyleSheet.create({
   menuItemCopy: {
     flex: 1,
     gap: spacing.xsmall,
+  },
+  menuItemTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xsmall,
+  },
+  menuItemIcon: {
+    color: colors.white,
+    fontSize: typography.caption,
+    fontWeight: '800',
   },
   menuItemText: {
     color: colors.white,

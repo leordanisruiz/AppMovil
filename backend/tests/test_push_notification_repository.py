@@ -47,7 +47,7 @@ class PushNotificationRepositoryTests(unittest.TestCase):
             push_notification_repository._POLL_NEW_NOVELTIES,
         )
         self.assertIn(
-            "ON CONFLICT (id_novedad, token_hash) DO NOTHING",
+            "ON CONFLICT (id_novedad, token_hash)",
             str(push_notification_repository._POLL_NEW_NOVELTIES),
         )
 
@@ -72,7 +72,11 @@ class PushNotificationRepositoryTests(unittest.TestCase):
         self.assertIn('"DW_SUMA"."DimEmpleados"', discovery_sql)
         self.assertIn("employee.\"IndicadorActividad\" = 'A'", discovery_sql)
         self.assertIn("device.activo = TRUE", discovery_sql)
-        self.assertIn("ON CONFLICT (id_novedad, token_hash) DO NOTHING", discovery_sql)
+        self.assertIn(
+            "ON CONFLICT (id_novedad, token_hash)",
+            discovery_sql,
+        )
+        self.assertIn("WHERE id_novedad IS NOT NULL", discovery_sql)
 
     def test_claims_outbox_rows_without_locking_other_workers(self) -> None:
         claim_sql = str(push_notification_repository._CLAIM_OUTBOX)
