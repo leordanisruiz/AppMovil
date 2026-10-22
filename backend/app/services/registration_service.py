@@ -20,6 +20,15 @@ from app.services.auth_service import employee_has_operator_code
 logger = logging.getLogger(__name__)
 
 
+def _role_id_from_classification(employee: Mapping[str, Any]) -> int:
+    classification = str(employee.get("Clasificacion") or "").strip().upper()
+    return 1 if classification in {"ADMINISTRATIVO", "ADMINISTRATIVA"} else 2
+
+
+def _registration_user_type(role_id: int) -> str:
+    return "ADMINISTRATIVO" if role_id == 1 else "OPERADOR"
+
+
 class RegistrationService:
     def __init__(
         self,
@@ -47,12 +56,13 @@ class RegistrationService:
                 ),
             )
 
+        role_id = _role_id_from_classification(employee)
         usuario = self._get_registered_user(db, identity)
         if usuario is not None:
             return RegistrationValidationResponse(
                 pertenece_suma=True,
                 puede_registrar=False,
-                tipo_usuario="ADMINISTRATIVO",
+                tipo_usuario=_registration_user_type(role_id),
                 nombre_completo=employee["NombreCompleto"],
                 mensaje="El usuario ya tiene una contraseña registrada.",
             )
@@ -60,7 +70,7 @@ class RegistrationService:
         return RegistrationValidationResponse(
             pertenece_suma=True,
             puede_registrar=True,
-            tipo_usuario="ADMINISTRATIVO",
+            tipo_usuario=_registration_user_type(role_id),
             nombre_completo=employee["NombreCompleto"],
             mensaje="Identidad validada; puede registrar una contraseña.",
         )
@@ -88,12 +98,14 @@ class RegistrationService:
             )
 
         password_hash = hash_password(password)
+        role_id = _role_id_from_classification(employee)
         try:
             usuario = self._usuario_app_repository.create(
                 db,
                 tipo_documento=identity.tipo_documento,
                 identificacion=identity.identificacion,
                 password_hash=password_hash,
+                rol_id=role_id,
             )
         except IntegrityError:
             db.rollback()
@@ -112,7 +124,7 @@ class RegistrationService:
                 detail="No se pudo registrar la contraseña en este momento.",
             ) from None
 
-        logger.info("Administrative password registered.")
+        logger.info("User password registered with role_id=%s.", role_id)
         return PasswordRegistrationResponse(
             mensaje="Contraseña registrada correctamente.",
             fecha_creacion=usuario.fecha_creacion,

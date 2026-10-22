@@ -13,7 +13,8 @@ _EMPLOYEE_BY_IDENTITY_QUERY = text(
         de."NombreEmpleado" || ' ' || de."ApellidosEmpleado" AS "NombreCompleto",
         de."FechaIngreso" AS "FechaIngreso",
         de."Cargo" AS "Cargo",
-        de."IndicadorActividad" AS "EstadoEmpleado"
+        de."IndicadorActividad" AS "EstadoEmpleado",
+        de."Clasificacion" AS "Clasificacion"
     FROM "DW_SUMA"."DimEmpleados" AS de
     WHERE de."TipoDocumento" = :tipo_documento
       AND de."Identificacion" = :identificacion
@@ -29,7 +30,8 @@ _EMPLOYEE_BY_IDENTIFICATION_QUERY = text(
         de."NombreEmpleado" || ' ' || de."ApellidosEmpleado" AS "NombreCompleto",
         de."FechaIngreso" AS "FechaIngreso",
         de."Cargo" AS "Cargo",
-        de."IndicadorActividad" AS "EstadoEmpleado"
+        de."IndicadorActividad" AS "EstadoEmpleado",
+        de."Clasificacion" AS "Clasificacion"
     FROM "DW_SUMA"."DimEmpleados" AS de
     WHERE de."Identificacion" = :identificacion
     """

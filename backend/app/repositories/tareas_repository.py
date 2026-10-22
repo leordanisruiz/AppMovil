@@ -159,6 +159,7 @@ _ENQUEUE_TASK_NOTIFICATIONS = text(
     """
     INSERT INTO "DW_CONFIG".expo_push_outbox (
         task_id,
+        task_event,
         token_hash,
         estado,
         intentos,
@@ -166,6 +167,7 @@ _ENQUEUE_TASK_NOTIFICATIONS = text(
     )
     SELECT
         :task_id,
+        'asignacion',
         device.token_hash,
         'pendiente',
         0,
@@ -177,7 +179,37 @@ _ENQUEUE_TASK_NOTIFICATIONS = text(
      AND employee."Codigo" = CAST(:operador_id AS text)
      AND employee."IndicadorActividad" = 'A'
     WHERE device.activo = TRUE
-    ON CONFLICT (task_id, token_hash)
+    ON CONFLICT (task_id, token_hash, task_event)
+        WHERE task_id IS NOT NULL
+    DO NOTHING
+    """
+)
+
+_ENQUEUE_TASK_STATUS_NOTIFICATIONS = text(
+    """
+    INSERT INTO "DW_CONFIG".expo_push_outbox (
+        task_id,
+        task_event,
+        token_hash,
+        estado,
+        intentos,
+        proximo_intento
+    )
+    SELECT
+        :task_id,
+        :task_event,
+        device.token_hash,
+        'pendiente',
+        0,
+        CURRENT_TIMESTAMP
+    FROM "DW_CONFIG".expo_push_tokens AS device
+    JOIN "DW_SUMA"."DimEmpleados" AS employee
+      ON employee."TipoDocumento"::text = device.tipo_documento
+     AND employee."Identificacion"::text = device.identificacion
+     AND employee."Codigo" = CAST(:operador_id AS text)
+     AND employee."IndicadorActividad" = 'A'
+    WHERE device.activo = TRUE
+    ON CONFLICT (task_id, token_hash, task_event)
         WHERE task_id IS NOT NULL
     DO NOTHING
     """
@@ -446,6 +478,15 @@ class TareasRepository:
         )
         task = result.mappings().one_or_none()
         if task is not None:
+            if estado == "COMPLETADA":
+                db.execute(
+                    _ENQUEUE_TASK_STATUS_NOTIFICATIONS,
+                    {
+                        "task_id": task["id"],
+                        "operador_id": task["operador_id"],
+                        "task_event": "completada",
+                    },
+                )
             db.commit()
         return task
 
@@ -465,5 +506,13 @@ class TareasRepository:
         )
         task = result.mappings().one_or_none()
         if task is not None:
+            db.execute(
+                _ENQUEUE_TASK_STATUS_NOTIFICATIONS,
+                {
+                    "task_id": task["id"],
+                    "operador_id": task["operador_id"],
+                    "task_event": "cerrada",
+                },
+            )
             db.commit()
         return task

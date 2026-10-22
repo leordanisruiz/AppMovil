@@ -120,6 +120,7 @@ class PushNotificationWorkerTests(unittest.TestCase):
                 "id_novedad": None,
                 "task_id": 55,
                 "tipo_tarea": "Capacitación",
+                "novedades_ids": [123, 456],
                 "token_hash": "b" * 64,
                 "intentos": 1,
                 "token_ciphertext": encrypted_token,
@@ -133,6 +134,7 @@ class PushNotificationWorkerTests(unittest.TestCase):
             token,
             task_id=55,
             task_type="Capacitación",
+            novelty_ids=[123, 456],
         )
         self.repository.mark_sent.assert_called_once()
 

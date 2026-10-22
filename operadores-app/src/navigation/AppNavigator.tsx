@@ -20,6 +20,8 @@ export function AppNavigator() {
     <Stack.Navigator
       screenOptions={{
         headerShown: false,
+        gestureEnabled: true,
+        gestureResponseDistance: { start: 48 },
         contentStyle: { backgroundColor: colors.background },
       }}
     >

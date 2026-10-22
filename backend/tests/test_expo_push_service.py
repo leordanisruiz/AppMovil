@@ -53,14 +53,22 @@ class ExpoPushServiceTests(unittest.TestCase):
                 "ExpoPushToken[device-token_123456789]",
                 task_id=55,
                 task_type="Capacitación",
+                novelty_ids=[123, 456],
             )
 
         self.assertEqual(ticket_id, "task-ticket")
         payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(payload["title"], "Nueva tarea asignada")
         self.assertEqual(
+            payload["body"],
+            (
+                'Tienes una tarea nueva "Capacitación" '
+                "relacionada con la novedad (123, 456)."
+            ),
+        )
+        self.assertEqual(
             payload["data"],
-            {"tipo": "tarea", "id_tarea": 55},
+            {"tipo": "tarea", "id_tarea": 55, "id_novedades": [123, 456]},
         )
 
     def test_marks_unregistered_token_for_deactivation(self) -> None:

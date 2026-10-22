@@ -189,6 +189,7 @@ class TareasServiceTests(unittest.TestCase):
             user_repository,
         )
         self.task_repository.get_by_creator.return_value = _task_record(
+            estado="COMPLETADA",
             usuario_creacion="CC-5843452",
         )
         self.task_repository.close_created_task.return_value = _task_record(
@@ -370,6 +371,38 @@ class TareasServiceTests(unittest.TestCase):
         self.assertEqual(context.exception.status_code, 409)
         self.task_repository.update_state.assert_not_called()
 
+    def test_rejects_uploading_videos_longer_than_three_minutes(self) -> None:
+        pending_task = _task_record(estado="PENDIENTE")
+        self.task_repository.get_by_id.return_value = pending_task
+        upload = UploadFile(
+            file=BytesIO(_build_mp4_with_duration_seconds(181)),
+            filename="evidence.mp4",
+            headers=Headers({"content-type": "video/mp4"}),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch(
+                    "app.services.tareas_service.get_settings",
+                    return_value=Mock(evidencias_path=directory),
+                ),
+                self.assertRaises(HTTPException) as context,
+            ):
+                self.service.upload_evidence(
+                    self.db,
+                    tarea_id=1,
+                    tipo_documento="CC",
+                    identificacion="1080017116",
+                    files=[upload],
+                )
+
+        self.assertEqual(context.exception.status_code, 422)
+        self.assertEqual(
+            context.exception.detail,
+            "Los videos deben durar máximo 3 minutos.",
+        )
+        self.task_repository.append_evidences.assert_not_called()
+
     def test_operator_can_resolve_own_evidence_file(self) -> None:
         user_repository = Mock()
         user_repository.get_by_identity.return_value = None
@@ -536,6 +569,35 @@ def _evidence_record(
         "fecha": "2026-10-20",
         "tipo": tipo,
     }
+
+
+def _build_mp4_with_duration_seconds(duration_seconds: int) -> bytes:
+    timescale = 1
+    mvhd_payload = (
+        b"\x00\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+        + timescale.to_bytes(4, "big")
+        + duration_seconds.to_bytes(4, "big")
+    )
+    mvhd_box = (
+        (8 + len(mvhd_payload)).to_bytes(4, "big")
+        + b"mvhd"
+        + mvhd_payload
+    )
+    moov_box = (
+        (8 + len(mvhd_box)).to_bytes(4, "big")
+        + b"moov"
+        + mvhd_box
+    )
+    ftyp_box = (
+        b"\x00\x00\x00\x18"
+        + b"ftyp"
+        + b"isom"
+        + b"\x00\x00\x02\x00"
+        + b"isomiso2"
+    )
+    return ftyp_box + moov_box
 
 
 def _task_record(

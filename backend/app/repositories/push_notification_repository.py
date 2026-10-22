@@ -115,7 +115,11 @@ _IS_INITIALIZED = text(
 _CLAIM_OUTBOX = text(
     """
     WITH candidates AS (
-        SELECT delivery.id, delivery.task_id, delivery.token_hash
+        SELECT
+            delivery.id,
+            delivery.task_id,
+            delivery.task_event,
+            delivery.token_hash
         FROM "DW_CONFIG".expo_push_outbox AS delivery
         JOIN "DW_CONFIG".expo_push_tokens AS device
           ON device.token_hash = delivery.token_hash
@@ -149,10 +153,12 @@ _CLAIM_OUTBOX = text(
         delivery.id,
         delivery.id_novedad,
         delivery.task_id,
+        delivery.task_event,
         delivery.token_hash,
         delivery.intentos,
         device.token_ciphertext,
-        task.tipo_tarea
+        task.tipo_tarea,
+        task.novedades_ids
     """
 )
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   ActivityIndicator,
@@ -6,6 +6,8 @@ import {
   Easing,
   Image,
   Modal,
+  PanResponder,
+  BackHandler,
   Pressable,
   StyleSheet,
   Text,
@@ -34,6 +36,7 @@ type TasksSectionProps = {
 
 const MAX_SELECTED_FILES = 10;
 const MAX_SELECTED_SIZE = 100 * 1024 * 1024;
+const MAX_VIDEO_DURATION_MS = 3 * 60 * 1000;
 const SUPPORTED_EVIDENCE_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -49,6 +52,24 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
   const { operator } = useAuth();
   const canManageEvidence = operator?.rolId === 1 || operator?.rolId === 2;
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const detailBackSwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          selectedTaskId !== null &&
+          gesture.x0 <= 64 &&
+          gesture.dx >= 36 &&
+          Math.abs(gesture.dy) < 55,
+        onPanResponderRelease: (_event, gesture) => {
+          if (selectedTaskId === null || gesture.dx < 92) return;
+          setSelectedTaskId(null);
+          setSelectedAssets([]);
+          setActionError(null);
+          setActionSuccess(null);
+        },
+      }),
+    [selectedTaskId],
+  );
   const [selectedAssets, setSelectedAssets] = useState<TaskEvidenceAsset[]>([]);
   const [isSourcePickerVisible, setIsSourcePickerVisible] = useState(false);
   const [isCompletionConfirmVisible, setIsCompletionConfirmVisible] = useState(false);
@@ -125,6 +146,19 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
       Alert.alert(
         'Límite de archivos',
         `Puedes adjuntar hasta ${MAX_SELECTED_FILES} archivos por envío.`,
+      );
+      return;
+    }
+    const videosOverLimit = additions.filter(
+      (asset) =>
+        asset.mimeType.startsWith('video/')
+        && typeof asset.durationMs === 'number'
+        && asset.durationMs > MAX_VIDEO_DURATION_MS,
+    );
+    if (videosOverLimit.length > 0) {
+      Alert.alert(
+        'Video demasiado largo',
+        'Solo se permiten videos de hasta 3 minutos para evitar sobrecargar el almacenamiento del servidor.',
       );
       return;
     }
@@ -266,6 +300,18 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
     setSelectedAssets((assets) => assets.filter((asset) => asset.uri !== uri));
   };
 
+  useEffect(() => {
+    if (selectedTaskId === null) return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setSelectedTaskId(null);
+      setSelectedAssets([]);
+      setActionError(null);
+      setActionSuccess(null);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [selectedTaskId]);
+
   if (!operatorCode) {
     return (
       <View style={styles.noticeCard}>
@@ -280,7 +326,7 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
   if (selectedTaskId !== null) {
     const task = detailQuery.data;
     return (
-      <View style={styles.section}>
+      <View style={styles.section} {...detailBackSwipe.panHandlers}>
         <Pressable
           accessibilityRole="button"
           onPress={() => {
@@ -786,6 +832,7 @@ function toTaskEvidenceAsset(
     name: fileName.replace(/[^\w.-]/g, '_'),
     mimeType,
     size: asset.fileSize ?? 0,
+    durationMs: typeof asset.duration === 'number' ? asset.duration : undefined,
   };
 }
 

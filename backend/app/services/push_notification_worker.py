@@ -121,6 +121,7 @@ class PushNotificationWorker:
         delivery_id = delivery["id"]
         novelty_id = delivery.get("id_novedad")
         task_id = delivery.get("task_id")
+        task_event = delivery.get("task_event")
         token_hash = delivery["token_hash"]
         attempt = delivery["intentos"]
         encrypted_token = delivery["token_ciphertext"]
@@ -144,11 +145,21 @@ class PushNotificationWorker:
 
         try:
             if task_id is not None:
-                ticket_id = self._push_client.send_task_assignment(
-                    token,
-                    task_id=task_id,
-                    task_type=delivery.get("tipo_tarea", "actividad asignada"),
-                )
+                if task_event in {"completada", "cerrada"}:
+                    ticket_id = self._push_client.send_task_status_change(
+                        token,
+                        task_id=task_id,
+                        status=task_event,
+                    )
+                else:
+                    ticket_id = self._push_client.send_task_assignment(
+                        token,
+                        task_id=task_id,
+                        task_type=delivery.get("tipo_tarea", "actividad asignada"),
+                        novelty_ids=_normalize_novelty_ids(
+                            delivery.get("novedades_ids")
+                        ),
+                    )
             else:
                 ticket_id = self._push_client.send(token, novelty_id)
         except ExpoInvalidPushToken as exc:
@@ -290,3 +301,16 @@ def create_push_notification_worker() -> PushNotificationWorker:
         interval_seconds=settings.expo_poll_interval_seconds,
         batch_size=settings.expo_poll_batch_size,
     )
+
+
+def _normalize_novelty_ids(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        return []
+
+    normalized: list[int] = []
+    for item in value:
+        try:
+            normalized.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return normalized

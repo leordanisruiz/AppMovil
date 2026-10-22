@@ -48,12 +48,46 @@ class ExpoPushClient:
         *,
         task_id: int,
         task_type: str,
+        novelty_ids: list[int] | None = None,
     ) -> str:
         return self._send_message(
             token,
             title="Nueva tarea asignada",
-            body=f"Tienes una nueva tarea: {task_type}.",
-            data={"tipo": "tarea", "id_tarea": task_id},
+            body=_task_assignment_body(
+                task_type=task_type,
+                novelty_ids=novelty_ids or [],
+            ),
+            data={
+                "tipo": "tarea",
+                "id_tarea": task_id,
+                "id_novedades": novelty_ids or [],
+            },
+            channel_id=TASK_CHANNEL_ID,
+        )
+
+    def send_task_status_change(
+        self,
+        token: str,
+        *,
+        task_id: int,
+        status: str,
+    ) -> str:
+        status_label = {
+            "completada": "completada",
+            "cerrada": "cerrada",
+        }.get(status)
+        if status_label is None:
+            raise ExpoPermanentError("INVALID_TASK_STATUS_EVENT")
+        return self._send_message(
+            token,
+            title="Tienes cambios en tus tareas",
+            body=f"La tarea #{task_id} fue {status_label}.",
+            data={
+                "tipo": "tarea",
+                "evento": "cambio_estado",
+                "id_tarea": task_id,
+                "estado": status.upper(),
+            },
             channel_id=TASK_CHANNEL_ID,
         )
 
@@ -157,3 +191,15 @@ class ExpoPushClient:
         if error_code == "MessageRateExceeded":
             raise ExpoRetryableError("MESSAGE_RATE_EXCEEDED")
         raise ExpoPermanentError(str(error_code or "EXPO_REJECTED")[:64])
+
+
+def _task_assignment_body(
+    *,
+    task_type: str,
+    novelty_ids: list[int],
+) -> str:
+    novelty_label = ", ".join(str(novelty_id) for novelty_id in novelty_ids)
+    return (
+        f'Tienes una tarea nueva "{task_type}" '
+        f"relacionada con la novedad ({novelty_label})."
+    )

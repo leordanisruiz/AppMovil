@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { StatusBar } from 'expo-status-bar';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
   Image,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -154,6 +157,21 @@ function EvidenceViewer({
   onClose: () => void;
 }) {
   const { height, width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const dismissSwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          index !== null &&
+          gesture.numberActiveTouches === 1 &&
+          ((gesture.x0 <= width * 0.18 && gesture.dx > 42 && Math.abs(gesture.dy) < 70) ||
+            (gesture.dy > 72 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2)),
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx >= 84 || gesture.dy >= 120) onClose();
+        },
+      }),
+    [index, onClose, width],
+  );
   const [busyAction, setBusyAction] = useState<EvidenceAction | null>(null);
   const { headers: sourceHeaders, isLoading, uri: sourceUri } = useEvidenceSource(
     taskId,
@@ -199,10 +217,13 @@ function EvidenceViewer({
       transparent
       visible
     >
-      <View style={styles.viewerBackdrop}>
-        <View style={styles.viewerHeader}>
+      <View style={styles.viewerBackdrop} {...dismissSwipe.panHandlers}>
+        <StatusBar style="light" />
+        <View style={[styles.viewerHeader, { paddingTop: insets.top }]}>
           <Pressable
             accessibilityLabel="Cerrar visor de evidencias"
+            accessibilityHint="Cierra la evidencia y vuelve a la tarea"
+            hitSlop={12}
             accessibilityRole="button"
             onPress={onClose}
             style={styles.viewerClose}
@@ -212,7 +233,7 @@ function EvidenceViewer({
           <Text style={styles.viewerCounter}>
             {index + 1} de {evidences.length}
           </Text>
-          <View style={styles.viewerClose} />
+          <View style={styles.viewerClose} pointerEvents="none" />
         </View>
 
         <View style={[styles.viewerStage, { height: stageHeight }]}>
@@ -773,13 +794,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     minHeight: 56,
+    zIndex: 5,
     paddingHorizontal: spacing.medium,
   },
   viewerClose: {
     alignItems: 'center',
-    height: 40,
+    elevation: 8,
+    height: 48,
     justifyContent: 'center',
-    width: 40,
+    minWidth: 48,
+    width: 48,
+    zIndex: 8,
   },
   viewerCloseText: {
     color: colors.white,

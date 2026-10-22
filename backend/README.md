@@ -26,7 +26,7 @@ Ejemplo:
 - Base de datos no disponible: `503` con un mensaje que no expone consultas ni
   credenciales.
 
-### Registro administrativo
+### Registro de cuentas
 
 - `POST /api/v1/auth/validate-registration`: recibe `tipo_documento` e
   `identificacion`, verifica que la persona exista y esté activa en SUMA, y
@@ -34,9 +34,13 @@ Ejemplo:
   y no puede registrar contraseña administrativa.
 - `POST /api/v1/auth/register-password`: vuelve a consultar SUMA antes de
   aceptar el alta. Acepta `tipo_documento`, `identificacion` y una contraseña
-  de exactamente ocho dígitos ASCII. Rechaza operadores y cuentas ya creadas.
+  de exactamente ocho dígitos ASCII. Rechaza empleados con código de operador
+  Kactus y cuentas ya creadas.
 - El alta guarda un hash bcrypt (nunca la contraseña en claro) y la fecha de
-  creación en `"DW_CONFIG".usuarios_app`. El login administrativo valida ese hash.
+  creación en `"DW_CONFIG".usuarios_app`. `rol_id` se asigna a partir de
+  `"DW_SUMA"."DimEmpleados"."Clasificacion"`: `ADMINISTRATIVO` o
+  `ADMINISTRATIVA` se guarda como `1`; las demás clasificaciones, como `2`.
+- El login de cuentas sin código de operador valida el hash registrado.
 - El acceso administrativo solo se valida por tipo y número de identificación
   contra SUMA, como se solicitó; no demuestra control de esos datos. Quien
   conozca la identificación de un empleado activo podría registrar una clave
@@ -112,7 +116,10 @@ de que Operaciones validará la evidencia antes de cerrar la novedad en SICO.
    de identificación. Para notificaciones Expo, aplicar además
    `sql/003_create_expo_push_notifications.sql`. Para habilitar tareas,
    aplicar `sql/004_create_tareas_operador.sql` y luego
-   `sql/005_task_assignment_roles.sql` y `sql/006_add_closed_task_state.sql`.
+   `sql/005_task_assignment_roles.sql`, `sql/006_add_closed_task_state.sql` y
+   `sql/007_task_status_push_events.sql` para notificar cambios de estado.
+   Aplicar `sql/008_backfill_usuario_roles.sql` para completar roles de
+   usuarios ya registrados.
    Ejecutar los scripts con el
    proceso de despliegue/DBA; la API no aplica DDL al iniciar.
 5. Configurar `DATABASE_URL` para la instancia PostgreSQL que contiene
@@ -225,8 +232,10 @@ Endpoints autenticados:
 
 Las evidencias se guardan en archivos, nunca en PostgreSQL. Configure
 `EVIDENCIAS_PATH` con la raíz accesible por la cuenta del servidor; la API crea
-`EvidenciasAppMovil/{identificacion_operador}/` y escribe nombres únicos
-seguros. En ejecución directa sobre Windows, el valor de `.env` puede ser
+`EvidenciasAppMovil/{identificacion_operador}/Tarea-{id}-Novedad.{ids}/` y escribe nombres únicos
+seguros. Si hay varias novedades, sus números se separan con puntos, por ejemplo
+`Tarea-3-Novedad.543424.543425`. Las evidencias anteriores siguen disponibles en
+su carpeta original. En ejecución directa sobre Windows, el valor de `.env` puede ser
 `EVIDENCIAS_PATH=\\172.20.10.32\web`. La cuenta del proceso necesita permisos
 de lectura/escritura sobre el recurso compartido.
 

@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Modal,
+  PanResponder,
+  BackHandler,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -27,9 +30,40 @@ export function CreatedTasksSection() {
   const canManageEvidence = operator?.rolId === 1 || operator?.rolId === 2;
   const tasksQuery = useTareasCreadas(true);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const detailBackSwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          selectedTaskId !== null &&
+          gesture.x0 <= 64 &&
+          gesture.dx >= 36 &&
+          Math.abs(gesture.dy) < 55,
+        onPanResponderRelease: (_event, gesture) => {
+          if (selectedTaskId !== null && gesture.dx >= 92) {
+            setSelectedTaskId(null);
+            setCloseError(null);
+          }
+        },
+      }),
+    [selectedTaskId],
+  );
   const [currentPage, setCurrentPage] = useState(1);
   const [closedTask, setClosedTask] = useState<OperatorTask | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
+  const [warningMotion] = useState(() => new Animated.Value(0));
+
+  useEffect(() => {
+    if (!closeError) return;
+    warningMotion.setValue(0);
+    const animation = Animated.sequence([
+      Animated.timing(warningMotion, { toValue: 1, duration: 150, useNativeDriver: true }),
+      Animated.timing(warningMotion, { toValue: 0, duration: 140, useNativeDriver: true }),
+      Animated.timing(warningMotion, { toValue: 1, duration: 150, useNativeDriver: true }),
+      Animated.timing(warningMotion, { toValue: 0, duration: 180, useNativeDriver: true }),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [closeError, warningMotion]);
   const detailQuery = useQuery({
     queryKey: ['tarea-creada', selectedTaskId],
     queryFn: () => tareasService.getCreatedById(selectedTaskId!),
@@ -60,10 +94,20 @@ export function CreatedTasksSection() {
   const page = Math.min(currentPage, pageCount);
   const pageTasks = tasks.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  useEffect(() => {
+    if (selectedTaskId === null) return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setSelectedTaskId(null);
+      setCloseError(null);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [selectedTaskId]);
+
   if (selectedTaskId !== null) {
     const task = detailQuery.data;
     return (
-      <View style={styles.section}>
+      <View style={styles.section} {...detailBackSwipe.panHandlers}>
         <Pressable
           accessibilityRole="button"
           onPress={() => {
@@ -116,10 +160,46 @@ export function CreatedTasksSection() {
                   ? getClosedMessage(closedTask)
                   : ''}
               </Text>
+              {closedTask?.novedades_ids.length ? (
+                <Text style={styles.successFollowUp}>
+                  Por favor, recuerda realizar el cierre de la novedad/es{' '}
+                  {closedTask.novedades_ids.map((id) => `#${id}`).join(', ')} en la
+                  {' '}plataforma de <Text style={styles.successFollowUpBold}>SICO</Text>.
+                </Text>
+              ) : null}
               <AppButton
                 onPress={() => setClosedTask(null)}
                 title="Entendido"
               />
+            </View>
+          </View>
+        </Modal>
+        <Modal
+          animationType="fade"
+          onRequestClose={() => setCloseError(null)}
+          transparent
+          visible={closeError !== null}
+        >
+          <View style={styles.modalBackdrop}>
+            <View accessibilityViewIsModal style={styles.warningModal}>
+              <Animated.View
+                style={[
+                  styles.warningIcon,
+                  {
+                    transform: [
+                      { scale: warningMotion.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) },
+                      { rotate: warningMotion.interpolate({ inputRange: [0, 1], outputRange: ['-8deg', '8deg'] }) },
+                    ],
+                  },
+                ]}
+              >
+                <Text style={styles.warningIconText}>!</Text>
+              </Animated.View>
+              <Text style={styles.warningTitle}>El operador aún no ha gestionado esta tarea</Text>
+              <Text accessibilityRole="alert" style={styles.warningMessage}>
+                {closeError}
+              </Text>
+              <AppButton onPress={() => setCloseError(null)} title="Entendido" />
             </View>
           </View>
         </Modal>
@@ -313,18 +393,18 @@ function CreatedTaskDetail({
         />
       </View>
 
-      {task.estado !== 'CERRADO' ? (
+      {task.estado === 'COMPLETADA' ? (
         <AppButton
           disabled={isClosing}
           loading={isClosing}
           onPress={onCloseTask}
           title="Cerrar tarea"
         />
-      ) : (
+      ) : task.estado === 'CERRADO' ? (
         <View style={styles.completedNote}>
           <Text style={styles.completedNoteText}>✓ Esta tarea ya está cerrada.</Text>
         </View>
-      )}
+      ) : null}
       {closeError ? (
         <Text accessibilityRole="alert" style={styles.errorText}>
           {closeError}
@@ -768,4 +848,51 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     textAlign: 'center',
   },
+  successFollowUp: {
+    color: colors.textSecondary,
+    fontSize: typography.caption,
+    lineHeight: 23,
+    textAlign: 'center',
+  },
+  successFollowUpBold: {
+    color: colors.textSecondary,
+    fontWeight: '800',
+  },
+  warningModal: {
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    borderRadius: radius.large,
+    gap: spacing.medium,
+    marginHorizontal: spacing.large,
+    padding: spacing.large,
+  },
+  warningIcon: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0E8',
+    borderColor: '#F4B183',
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    height: 68,
+    justifyContent: 'center',
+    width: 68,
+  },
+  warningIconText: {
+    color: '#B54708',
+    fontSize: 38,
+    fontWeight: '900',
+  },
+  warningTitle: {
+    color: colors.text,
+    fontSize: typography.heading,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  warningMessage: {
+    color: colors.textSecondary,
+    fontSize: typography.caption,
+    lineHeight: 23,
+    textAlign: 'center',
+  },
 });
+
+\n

@@ -4,7 +4,7 @@
     "slug": "portal-operadores",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/brand-logo.png",
     "userInterfaceStyle": "light",
     "plugins": [
       [
@@ -46,12 +46,11 @@
     "android": {
       "package": "com.sumaaplicaciones.portaloperadores",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/brand-logo.png",
+        "monochromeImage": "./assets/brand-symbol.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": true
     },
     "web": {
       "favicon": "./assets/favicon.png"

@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 MAX_EVIDENCE_FILES = 10
 MAX_EVIDENCE_SIZE_BYTES = 100 * 1024 * 1024
+MAX_VIDEO_DURATION_SECONDS = 3 * 60
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 ALLOWED_MEDIA_TYPES = {
     "image/jpeg": (".jpg", "image"),
@@ -378,6 +379,14 @@ class TareasService:
                 )
             if current["estado"] == "CERRADO":
                 return _to_task_response(current)
+            if current["estado"] != "COMPLETADA":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "No es posible cerrar la tarea. El operador no ha "
+                        "gestionado la tarea."
+                    ),
+                )
             updated = self._tareas_repository.close_created_task(
                 db,
                 tarea_id=tarea_id,
@@ -476,7 +485,11 @@ class TareasService:
                 detail=f"Puede adjuntar máximo {MAX_EVIDENCE_FILES} archivos por envío.",
             )
 
-        evidence_directory = _get_operator_evidence_directory(identificacion)
+        evidence_directory = _get_task_evidence_directory(
+            identificacion,
+            tarea_id=tarea_id,
+            novedades_ids=current_task.get("novedades_ids", []),
+        )
         staged_paths: list[Path] = []
         final_paths: list[Path] = []
         evidence_records: list[dict[str, str]] = []
@@ -493,6 +506,8 @@ class TareasService:
                 staged_paths.append(temporary_path)
                 file_size = _write_upload(upload, temporary_path)
                 _verify_file_signature(temporary_path, content_type)
+                if media_type == "video":
+                    _verify_video_duration(temporary_path)
                 total_bytes += file_size
                 if total_bytes > MAX_EVIDENCE_SIZE_BYTES:
                     raise HTTPException(
@@ -507,8 +522,11 @@ class TareasService:
                 evidence_records.append(
                     {
                         "nombre": filename,
-                        "ruta": (
-                            f"/EvidenciasAppMovil/{identificacion}/{filename}"
+                        "ruta": _evidence_relative_path(
+                            identificacion,
+                            tarea_id=tarea_id,
+                            novedades_ids=current_task.get("novedades_ids", []),
+                            filename=filename,
                         ),
                         "fecha": date.today().isoformat(),
                         "tipo": media_type,
@@ -721,11 +739,24 @@ class TareasService:
                 detail="La evidencia no existe.",
             )
 
-        evidence_directory = _get_operator_evidence_directory(
-            operator_identificacion
+        evidence_directory = _get_task_evidence_directory(
+            operator_identificacion,
+            tarea_id=tarea_id,
+            novedades_ids=task.get("novedades_ids", []),
         )
         path = (evidence_directory / nombre).resolve()
-        if not path.is_relative_to(evidence_directory.resolve()) or not path.is_file():
+        legacy_directory = _get_operator_evidence_directory(operator_identificacion)
+        legacy_path = (legacy_directory / nombre).resolve()
+        if not path.is_relative_to(evidence_directory.resolve()):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La evidencia no existe.",
+            )
+        if not path.is_file() and legacy_path.is_relative_to(legacy_directory.resolve()):
+            # Mantiene accesibles las evidencias guardadas antes de organizarlas
+            # en carpetas por tarea.
+            path = legacy_path
+        if not path.is_file():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="La evidencia no existe.",
@@ -863,6 +894,42 @@ def _get_operator_evidence_directory(identificacion: str) -> Path:
     )
 
 
+def _task_evidence_folder_name(tarea_id: int, novedades_ids: Any) -> str:
+    """Construye un nombre seguro y reconocible para la carpeta de la tarea."""
+    novelty_ids = sorted(
+        {
+            int(value)
+            for value in (novedades_ids or [])
+            if str(value).isascii() and str(value).isdecimal()
+        }
+    )
+    novelty_suffix = ".".join(str(value) for value in novelty_ids) or "Sin-novedad"
+    return f"Tarea-{tarea_id}-Novedad.{novelty_suffix}"
+
+
+def _get_task_evidence_directory(
+    identificacion: str,
+    *,
+    tarea_id: int,
+    novedades_ids: Any,
+) -> Path:
+    return _get_operator_evidence_directory(identificacion) / _task_evidence_folder_name(
+        tarea_id,
+        novedades_ids,
+    )
+
+
+def _evidence_relative_path(
+    identificacion: str,
+    *,
+    tarea_id: int,
+    novedades_ids: Any,
+    filename: str,
+) -> str:
+    folder = _task_evidence_folder_name(tarea_id, novedades_ids)
+    return f"/EvidenciasAppMovil/{identificacion}/{folder}/{filename}"
+
+
 def _validate_upload(upload: UploadFile) -> tuple[str, str, str]:
     media_type = (upload.content_type or "").lower()
     expected = ALLOWED_MEDIA_TYPES.get(media_type)
@@ -934,6 +1001,109 @@ def _verify_file_signature(path: Path, media_type: str) -> None:
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="El contenido del archivo no coincide con su formato declarado.",
         )
+
+
+def _verify_video_duration(path: Path) -> None:
+    duration_seconds = _read_iso_bmff_duration_seconds(path)
+    if duration_seconds is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="No fue posible validar la duración del video.",
+        )
+    if duration_seconds > MAX_VIDEO_DURATION_SECONDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Los videos deben durar máximo 3 minutos.",
+        )
+
+
+def _read_iso_bmff_duration_seconds(path: Path) -> float | None:
+    with path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        file_end = stream.tell()
+        moov_box = _find_box(stream, start=0, end=file_end, target=b"moov")
+        if moov_box is None:
+            return None
+        mvhd_box = _find_box(
+            stream,
+            start=moov_box[0],
+            end=moov_box[1],
+            target=b"mvhd",
+        )
+        if mvhd_box is None:
+            return None
+        return _parse_mvhd_duration(
+            stream,
+            payload_start=mvhd_box[0],
+            payload_end=mvhd_box[1],
+        )
+
+
+def _find_box(
+    stream: Any,
+    *,
+    start: int,
+    end: int,
+    target: bytes,
+) -> tuple[int, int] | None:
+    cursor = start
+    while cursor + 8 <= end:
+        stream.seek(cursor)
+        header = stream.read(8)
+        if len(header) < 8:
+            return None
+        size = int.from_bytes(header[:4], "big")
+        box_type = header[4:8]
+        header_size = 8
+        if size == 1:
+            extended_size = stream.read(8)
+            if len(extended_size) < 8:
+                return None
+            size = int.from_bytes(extended_size, "big")
+            header_size = 16
+        elif size == 0:
+            size = end - cursor
+
+        if size < header_size:
+            return None
+        payload_start = cursor + header_size
+        payload_end = cursor + size
+        if payload_end > end:
+            return None
+        if box_type == target:
+            return payload_start, payload_end
+        cursor = payload_end
+    return None
+
+
+def _parse_mvhd_duration(
+    stream: Any,
+    *,
+    payload_start: int,
+    payload_end: int,
+) -> float | None:
+    stream.seek(payload_start)
+    payload = stream.read(payload_end - payload_start)
+    if len(payload) < 20:
+        return None
+
+    version = payload[0]
+    if version == 0:
+        if len(payload) < 20:
+            return None
+        timescale = int.from_bytes(payload[12:16], "big")
+        duration = int.from_bytes(payload[16:20], "big")
+    elif version == 1:
+        if len(payload) < 32:
+            return None
+        timescale = int.from_bytes(payload[20:24], "big")
+        duration = int.from_bytes(payload[24:32], "big")
+    else:
+        return None
+
+    if timescale <= 0:
+        return None
+    return duration / timescale
 
 
 def _remove_files(paths: list[Path]) -> None:

@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
 import { isAxiosError } from 'axios';
 import {
   ActivityIndicator,
   Image,
   Modal,
+  BackHandler,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -81,6 +84,7 @@ const sectionTitles: Record<PortalSection, string> = {
 
 export function HomeScreen() {
   const { operator, logout, expireSession } = useAuth();
+  const navigation = useNavigation();
   const operatorCode = operator?.codigo?.trim() || null;
   const canAssignTasks = operator?.rolId === 1 || operator?.rolId === 2;
   const {
@@ -92,11 +96,32 @@ export function HomeScreen() {
   } = useNovedades(operatorCode);
   const tareasQuery = useTareas(Boolean(operatorCode));
   const createdTasksQuery = useTareasCreadas(canAssignTasks);
+  const pendingTaskCount = tareasQuery.data?.filter(
+    (task) => task.estado === 'PENDIENTE' || task.estado === 'EN_PROCESO',
+  ).length ?? 0;
   const [isWelcomeNoticeDismissed, setIsWelcomeNoticeDismissed] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [pushSetupError, setPushSetupError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<PortalSection>('inicio');
+  const backSwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          gesture.x0 <= 28 && gesture.dx >= 36 && Math.abs(gesture.dy) < 55,
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx < 92 || Math.abs(gesture.dy) > 70) return;
+          if (isMenuOpen) {
+            setIsMenuOpen(false);
+          } else if (activeSection !== 'inicio') {
+            setActiveSection('inicio');
+          } else if (navigation.canGoBack()) {
+            navigation.goBack();
+          }
+        },
+      }),
+    [activeSection, isMenuOpen, navigation],
+  );
   const noveltySnapshot = useRef<{
     operatorCode: string;
     ids: Set<number>;
@@ -125,6 +150,21 @@ export function HomeScreen() {
             taskCount: tareasQuery.data?.length,
           }
         : null;
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isMenuOpen) {
+        setIsMenuOpen(false);
+        return true;
+      }
+      if (activeSection !== 'inicio') {
+        setActiveSection('inicio');
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [activeSection, isMenuOpen]);
 
   useEffect(() => {
     if (!operatorCode) return undefined;
@@ -167,6 +207,7 @@ export function HomeScreen() {
     };
   }, [expireSession, operatorCode]);
 
+
   useEffect(() => {
     if (!operatorCode || !novedades) return;
 
@@ -198,16 +239,18 @@ export function HomeScreen() {
     }
   }, [novedades, operatorCode]);
 
+
   useEffect(() => {
     if (!operatorCode) return;
 
     const pendingCount =
-      (tareasQuery.data?.length ?? 0) + (novedades?.total ?? 0);
+      pendingTaskCount + (novedades?.total ?? 0);
 
     void syncAppBadge(pendingCount).catch((error: unknown) => {
       console.error('No se pudo actualizar el contador del icono:', error);
     });
-  }, [novedades?.total, operatorCode, tareasQuery.data?.length]);
+  }, [novedades?.total, operatorCode, pendingTaskCount]);
+
 
   useEffect(() => {
     const openNovedades = () => {
@@ -251,7 +294,7 @@ export function HomeScreen() {
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-      <View style={styles.appShell}>
+      <View style={styles.appShell} {...backSwipe.panHandlers}>
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
@@ -284,13 +327,6 @@ export function HomeScreen() {
               </View>
             </View>
 
-            <Pressable
-              accessibilityRole="button"
-              onPress={handleLogout}
-              style={styles.logoutButton}
-            >
-              <Text style={styles.logoutText}>Salir</Text>
-            </Pressable>
           </View>
 
           <View style={styles.pageHeading}>
@@ -419,7 +455,7 @@ export function HomeScreen() {
                       </View>
                       <Text style={styles.summaryLabel}>Tareas</Text>
                       <Text style={styles.summaryValue}>
-                        {tareasQuery.data?.length ?? '—'}
+                        {tareasQuery.isLoading ? '—' : pendingTaskCount}
                       </Text>
                       <Text style={styles.summaryFootnote}>
                         Actividades asignadas
@@ -567,7 +603,7 @@ export function HomeScreen() {
             </View>
           ) : null}
 
-          {activeSection === 'tareas' ? (
+          {activeSection === 'tareas' && !canAssignTasks ? (
             <TasksSection operatorCode={operatorCode} />
           ) : null}
           {activeSection === 'tareas-creadas' && canAssignTasks ? (
@@ -608,6 +644,7 @@ export function HomeScreen() {
                 .filter(
                   (item) =>
                     (item.value !== 'asignacion-tareas' || canAssignTasks) &&
+                    (item.value !== 'tareas' || !canAssignTasks) &&
                     (item.value !== 'tareas-creadas' || canAssignTasks),
                 )
                 .map((item) => (
@@ -645,12 +682,12 @@ export function HomeScreen() {
                     <Text style={styles.menuItemDescription}>{item.description}</Text>
                   </View>
                   {(item.value === 'novedades' && novedades?.total) ||
-                  (item.value === 'tareas' && tareasQuery.data?.length) ? (
+                  (item.value === 'tareas' && pendingTaskCount) ? (
                     <View style={styles.menuBadge}>
                       <Text style={styles.menuBadgeText}>
                         {item.value === 'novedades'
                           ? novedades?.total
-                          : tareasQuery.data?.length}
+                          : pendingTaskCount}
                       </Text>
                     </View>
                   ) : null}
@@ -671,10 +708,17 @@ export function HomeScreen() {
                 </View>
               </View>
               <Pressable
+                accessibilityLabel="Cerrar sesion"
                 accessibilityRole="button"
                 onPress={handleLogout}
                 style={styles.sidebarLogout}
               >
+                <View style={styles.sidebarLogoutIconCircle}>
+                  <View style={styles.sidebarLogoutDoor} />
+                  <View style={styles.sidebarLogoutArrowStem} />
+                  <View style={styles.sidebarLogoutArrowHeadTop} />
+                  <View style={styles.sidebarLogoutArrowHeadBottom} />
+                </View>
                 <Text style={styles.sidebarLogoutText}>Cerrar sesión</Text>
               </Pressable>
             </View>
@@ -888,14 +932,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1,
     marginTop: 2,
-  },
-  logoutButton: {
-    padding: spacing.small,
-  },
-  logoutText: {
-    color: colors.primary,
-    fontSize: typography.caption,
-    fontWeight: '700',
   },
   pageHeading: {
     gap: spacing.xsmall,
@@ -1576,10 +1612,61 @@ const styles = StyleSheet.create({
     fontSize: typography.small,
   },
   sidebarLogout: {
+    alignItems: 'center',
     borderTopColor: colors.navyLight,
     borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: spacing.small,
     marginTop: spacing.medium,
     paddingVertical: spacing.medium,
+  },
+  sidebarLogoutIconCircle: {
+    backgroundColor: colors.navyLight,
+    borderRadius: radius.small,
+    height: 34,
+    position: 'relative',
+    width: 34,
+  },
+  sidebarLogoutDoor: {
+    borderBottomColor: colors.accentLight,
+    borderBottomWidth: 2,
+    borderLeftColor: colors.accentLight,
+    borderLeftWidth: 2,
+    borderTopColor: colors.accentLight,
+    borderTopWidth: 2,
+    borderTopLeftRadius: 2,
+    borderBottomLeftRadius: 2,
+    height: 18,
+    left: 7,
+    position: 'absolute',
+    top: 8,
+    width: 12,
+  },
+  sidebarLogoutArrowStem: {
+    backgroundColor: colors.accentLight,
+    height: 2,
+    left: 12,
+    position: 'absolute',
+    top: 16,
+    width: 14,
+  },
+  sidebarLogoutArrowHeadTop: {
+    backgroundColor: colors.accentLight,
+    height: 2,
+    left: 21,
+    position: 'absolute',
+    top: 12,
+    transform: [{ rotate: '45deg' }],
+    width: 8,
+  },
+  sidebarLogoutArrowHeadBottom: {
+    backgroundColor: colors.accentLight,
+    height: 2,
+    left: 21,
+    position: 'absolute',
+    top: 19,
+    transform: [{ rotate: '-45deg' }],
+    width: 8,
   },
   sidebarLogoutText: {
     color: colors.accentLight,

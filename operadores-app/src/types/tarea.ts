@@ -65,4 +65,5 @@ export type TaskEvidenceAsset = {
   name: string;
   mimeType: string;
   size?: number;
+  durationMs?: number;
 };

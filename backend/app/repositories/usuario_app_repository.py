@@ -25,12 +25,13 @@ class UsuarioAppRepository:
         tipo_documento: str,
         identificacion: str,
         password_hash: str,
+        rol_id: int,
     ) -> UsuarioApp:
         usuario = UsuarioApp(
             tipo_documento=tipo_documento,
             identificacion=identificacion,
             password_hash=password_hash,
-            rol_id=None,
+            rol_id=rol_id,
         )
         db.add(usuario)
         db.commit()
