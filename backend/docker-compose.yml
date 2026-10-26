@@ -2,7 +2,7 @@ services:
   api:
     build: .
     ports:
-      - "8000:8000"
+      - "8001:8000"
     restart: unless-stopped
     environment:
       APP_NAME: ${APP_NAME:-AppMovil API}
@@ -38,3 +38,4 @@ services:
     volumes:
       - ./logs:/backend/logs
       - ${EVIDENCIAS_HOST_PATH:-${EVIDENCIAS_PATH:-./evidencias}}:/mnt/evidencias
+
