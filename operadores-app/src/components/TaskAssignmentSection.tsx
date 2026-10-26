@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -30,6 +31,7 @@ export function TaskAssignmentSection() {
   const [operator, setOperator] = useState<AssignableOperator | null>(null);
   const [directNovelty, setDirectNovelty] = useState<AssignableNovelty | null>(null);
   const [selectedNoveltyIds, setSelectedNoveltyIds] = useState<number[]>([]);
+  const [expandedNoveltyIds, setExpandedNoveltyIds] = useState<number[]>([]);
   const [selectedTypeId, setSelectedTypeId] = useState<number | null>(null);
   const [description, setDescription] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -148,6 +150,14 @@ export function TaskAssignmentSection() {
     );
   };
 
+  const toggleNoveltyDetails = (noveltyId: number) => {
+    setExpandedNoveltyIds((expanded) =>
+      expanded.includes(noveltyId)
+        ? expanded.filter((id) => id !== noveltyId)
+        : [...expanded, noveltyId],
+    );
+  };
+
   const canAssign =
     operator !== null &&
     selectedNoveltyIds.length > 0 &&
@@ -156,13 +166,13 @@ export function TaskAssignmentSection() {
     !assignment.isPending;
 
   return (
-    <View style={styles.section}>
+    <View style={[styles.section, Platform.OS === 'web' && styles.webSection]}>
       <SectionHeading
         title="Asignación de tareas"
         supportingText="Busca al operador, relaciona las novedades y completa los datos de la actividad."
       />
 
-      <View style={styles.card}>
+      <View style={[styles.card, Platform.OS === 'web' && styles.webCard]}>
         <Text style={styles.fieldLabel}>BUSCAR POR</Text>
         <View style={styles.modeRow}>
           <ModeButton
@@ -263,6 +273,8 @@ export function TaskAssignmentSection() {
               novelty={directNovelty}
               selected={selectedNoveltyIds.includes(directNovelty.id_novedad)}
               onPress={() => toggleNovelty(directNovelty.id_novedad)}
+              expanded={expandedNoveltyIds.includes(directNovelty.id_novedad)}
+              onToggleExpanded={() => toggleNoveltyDetails(directNovelty.id_novedad)}
             />
           ) : noveltiesQuery.isLoading ? (
             <ActivityIndicator color={colors.primary} style={styles.loader} />
@@ -281,6 +293,8 @@ export function TaskAssignmentSection() {
                     novelty={novelty}
                     selected={selectedNoveltyIds.includes(novelty.id_novedad)}
                     onPress={() => toggleNovelty(novelty.id_novedad)}
+                    expanded={expandedNoveltyIds.includes(novelty.id_novedad)}
+                    onToggleExpanded={() => toggleNoveltyDetails(novelty.id_novedad)}
                   />
                 ))}
             </ScrollView>
@@ -416,30 +430,64 @@ function NoveltyRow({
   novelty,
   selected,
   onPress,
+  expanded,
+  onToggleExpanded,
 }: {
   novelty: AssignableNovelty;
   selected: boolean;
   onPress: () => void;
+  expanded: boolean;
+  onToggleExpanded: () => void;
 }) {
   return (
-    <Pressable
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked: selected }}
-      onPress={onPress}
-      style={styles.noveltyRow}
-    >
-      <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
-        {selected ? <Text style={styles.checkmark}>✓</Text> : null}
+    <View style={styles.noveltyItem}>
+      <View style={styles.noveltyRow}>
+        <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={onPress} style={styles.noveltySelect}>
+          <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
+            {selected ? <Text style={styles.checkmark}>✓</Text> : null}
+          </View>
+          <View style={styles.noveltyCopy}>
+            <Text style={styles.noveltyTitle}>Novedad #{novelty.id_novedad}</Text>
+            <Text numberOfLines={2} style={styles.secondaryText}>
+              {novelty.tipo_novedad ?? 'Novedad'} ·{' '}
+              {formatNoveltyDate(novelty.fecha_novedad)}
+            </Text>
+          </View>
+          <Text style={styles.noveltyStatus}>{novelty.estado ?? 'ABIERTA'}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityLabel={expanded ? 'Ocultar detalle de novedad' : 'Ver detalle de novedad'}
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          onPress={onToggleExpanded}
+          style={({ pressed }) => [styles.expandButton, pressed && styles.expandButtonPressed]}
+        >
+          <View style={[styles.chevron, expanded && styles.chevronExpanded]}>
+            <View style={[styles.chevronHalf, styles.chevronLeft]} />
+            <View style={[styles.chevronHalf, styles.chevronRight]} />
+          </View>
+        </Pressable>
       </View>
-      <View style={styles.noveltyCopy}>
-        <Text style={styles.noveltyTitle}>Novedad #{novelty.id_novedad}</Text>
-        <Text numberOfLines={2} style={styles.secondaryText}>
-          {novelty.tipo_novedad ?? 'Novedad'} ·{' '}
-          {formatNoveltyDate(novelty.fecha_novedad)}
-        </Text>
-      </View>
-      <Text style={styles.noveltyStatus}>{novelty.estado ?? 'ABIERTA'}</Text>
-    </Pressable>
+      {expanded ? (
+        <View style={styles.noveltyDetails}>
+          <DetailField label="ID de novedad" value={novelty.id_novedad} />
+          <DetailField label="Fecha" value={formatNoveltyDate(novelty.fecha_novedad)} />
+          <DetailField label="Código" value={novelty.codigo} />
+          <DetailField label="Tipo de novedad" value={novelty.tipo_novedad} />
+          <DetailField label="Descripción" value={novelty.descripcion} />
+          <DetailField label="Estado" value={novelty.estado} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function DetailField({ label, value }: { label: string; value: string | number | null | undefined }) {
+  return (
+    <View style={styles.detailField}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value === null || value === undefined || value === '' ? '—' : String(value)}</Text>
+    </View>
   );
 }
 
@@ -513,6 +561,7 @@ function Feedback({
 
 const styles = StyleSheet.create({
   section: { gap: spacing.medium },
+  webSection: { alignSelf: 'center', maxWidth: 980, width: '100%' },
   card: {
     backgroundColor: colors.white,
     borderColor: colors.border,
@@ -521,6 +570,7 @@ const styles = StyleSheet.create({
     gap: spacing.medium,
     padding: spacing.large,
   },
+  webCard: { padding: spacing.xxlarge },
   resultCard: {
     backgroundColor: colors.white,
     borderColor: colors.border,
@@ -601,6 +651,36 @@ const styles = StyleSheet.create({
     minHeight: 62,
     paddingVertical: spacing.small,
   },
+  noveltyItem: { borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth },
+  noveltySelect: { alignItems: 'center', flexDirection: 'row', flex: 1, gap: spacing.small, minHeight: 62 },
+  expandButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFF5F5',
+    borderColor: '#F3DADA',
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 32,
+    justifyContent: 'center',
+    marginHorizontal: spacing.xsmall,
+    width: 32,
+  },
+  expandButtonPressed: { backgroundColor: '#FCE8E8' },
+  chevron: { alignItems: 'center', height: 10, justifyContent: 'center', width: 12 },
+  chevronExpanded: { transform: [{ rotate: '180deg' }] },
+  chevronHalf: {
+    backgroundColor: colors.primary,
+    borderRadius: 1,
+    height: 2,
+    position: 'absolute',
+    top: 4,
+    width: 7,
+  },
+  chevronLeft: { left: 0, transform: [{ rotate: '45deg' }] },
+  chevronRight: { right: 0, transform: [{ rotate: '-45deg' }] },
+  noveltyDetails: { backgroundColor: '#FFF8F8', borderLeftColor: colors.primary, borderLeftWidth: 2, borderRadius: radius.medium, gap: spacing.medium, marginBottom: spacing.medium, marginLeft: 32, padding: spacing.medium },
+  detailField: { gap: 2 },
+  detailLabel: { color: colors.textSecondary, fontSize: typography.small, fontWeight: '700' },
+  detailValue: { color: colors.text, fontSize: typography.caption },
   checkbox: {
     alignItems: 'center',
     borderColor: colors.border,

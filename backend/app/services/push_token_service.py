@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.repositories.operador_repository import OperadorRepository
 from app.repositories.push_token_repository import PushTokenRepository
+from app.repositories.usuario_app_repository import UsuarioAppRepository
 from app.schemas.novedad import (
     PushTokenDeactivationResponse,
     PushTokenResponse,
@@ -25,9 +26,11 @@ class PushTokenService:
         self,
         token_repository: PushTokenRepository,
         operator_repository: OperadorRepository,
+        user_repository: UsuarioAppRepository | None = None,
     ) -> None:
         self._token_repository = token_repository
         self._operator_repository = operator_repository
+        self._user_repository = user_repository or UsuarioAppRepository()
 
     def register(
         self,
@@ -44,12 +47,20 @@ class PushTokenService:
                 tipo_documento=tipo_documento,
                 identificacion=identificacion,
             )
-            if not _is_active_operator(employee):
+            user = self._user_repository.get_by_identity(
+                db,
+                tipo_documento=tipo_documento,
+                identificacion=identificacion,
+            )
+            if not (
+                _is_active_operator(employee)
+                or _is_active_task_assigner(employee, user)
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=(
-                        "Solo los operadores activos pueden registrar "
-                        "notificaciones de novedades."
+                        "Solo operadores activos o usuarios activos con "
+                        "rol 1 o 2 pueden registrar notificaciones."
                     ),
                 )
 
@@ -122,6 +133,21 @@ def _is_active_operator(
     return normalized_code > 0 and status_value == "A"
 
 
+def _is_active_task_assigner(
+    employee: Mapping[str, Any] | None,
+    user: Any | None,
+) -> bool:
+    if not employee or user is None:
+        return False
+    try:
+        return (
+            str(employee["EstadoEmpleado"]).strip().upper() == "A"
+            and user.rol_id in (1, 2)
+        )
+    except (KeyError, TypeError, AttributeError):
+        return False
+
+
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -146,4 +172,5 @@ def _get_fernet() -> Fernet:
 push_token_service = PushTokenService(
     PushTokenRepository(),
     OperadorRepository(),
+    UsuarioAppRepository(),
 )

@@ -5,6 +5,7 @@ import {
   Modal,
   PanResponder,
   BackHandler,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -208,7 +209,7 @@ export function CreatedTasksSection() {
   }
 
   return (
-    <View style={styles.section}>
+    <View style={[styles.section, Platform.OS === 'web' && styles.webSection]}>
       <SectionHeading
         title="Tareas creadas"
         supportingText="Haz seguimiento a las tareas que asignaste a los operadores."
@@ -242,8 +243,8 @@ export function CreatedTasksSection() {
             Toca una fila para consultar el detalle y las evidencias.
           </Text>
           <ScrollView horizontal showsHorizontalScrollIndicator>
-            <View>
-              <View style={[styles.tableRow, styles.tableHeader]}>
+            <View style={Platform.OS === 'web' ? styles.webTableContent : undefined}>
+              <View style={[styles.tableRow, styles.tableHeader, Platform.OS === 'web' && styles.webTableRow]}>
                 <TableCell label="ID" style={styles.idColumn} header />
                 <TableCell label="Fecha" style={styles.dateColumn} header />
                 <TableCell label="Tarea" style={styles.taskColumn} header />
@@ -262,6 +263,7 @@ export function CreatedTasksSection() {
                   style={[
                     styles.tableRow,
                     index % 2 === 1 && styles.tableRowAlternate,
+                    Platform.OS === 'web' && styles.webTableRow,
                   ]}
                 >
                   <TableCell label={`#${task.id}`} style={styles.idColumn} />
@@ -274,7 +276,7 @@ export function CreatedTasksSection() {
                     label={String(task.operador_id)}
                     style={styles.operatorColumn}
                   />
-                  <View style={[styles.statusColumn, styles.tableCellView]}>
+                  <View style={[styles.statusColumn, styles.tableCellView, Platform.OS === 'web' && styles.webColumn]}>
                     <StatusBadge status={task.estado} />
                   </View>
                   <TableCell
@@ -426,7 +428,12 @@ function TableCell({
   return (
     <Text
       numberOfLines={header ? 1 : 2}
-      style={[styles.tableCell, style, header && styles.tableHeaderText]}
+      style={[
+        styles.tableCell,
+        style,
+        Platform.OS === 'web' && styles.webColumn,
+        header && styles.tableHeaderText,
+      ]}
     >
       {label}
     </Text>
@@ -517,6 +524,10 @@ const styles = StyleSheet.create({
   section: {
     gap: spacing.medium,
   },
+  webSection: { alignSelf: 'center', maxWidth: 1120, width: '100%' },
+  webTableContent: { minWidth: '100%' },
+  webTableRow: { width: '100%' },
+  webColumn: { flexGrow: 1 },
   loader: {
     padding: spacing.large,
   },
@@ -894,5 +905,3 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
-
-\n

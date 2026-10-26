@@ -202,13 +202,38 @@ _ENQUEUE_TASK_STATUS_NOTIFICATIONS = text(
         'pendiente',
         0,
         CURRENT_TIMESTAMP
-    FROM "DW_CONFIG".expo_push_tokens AS device
-    JOIN "DW_SUMA"."DimEmpleados" AS employee
-      ON employee."TipoDocumento"::text = device.tipo_documento
-     AND employee."Identificacion"::text = device.identificacion
-     AND employee."Codigo" = CAST(:operador_id AS text)
-     AND employee."IndicadorActividad" = 'A'
-    WHERE device.activo = TRUE
+    FROM "DW_OPERACIONAL".tareas_operador AS task
+    JOIN "DW_CONFIG".expo_push_tokens AS device
+      ON device.activo = TRUE
+     AND (
+         (
+             :task_event = 'completada'
+             AND device.tipo_documento = split_part(task.usuario_creacion, '-', 1)
+             AND device.identificacion = split_part(task.usuario_creacion, '-', 2)
+         )
+         OR (
+             :task_event = 'cerrada'
+             AND EXISTS (
+                 SELECT 1
+                 FROM "DW_SUMA"."DimEmpleados" AS employee
+                 WHERE employee."TipoDocumento"::text = device.tipo_documento
+                   AND employee."Identificacion"::text = device.identificacion
+                   AND employee."Codigo" = CAST(task.operador_id AS text)
+                   AND employee."IndicadorActividad" = 'A'
+             )
+         )
+     )
+    WHERE task.id = :task_id
+      AND (
+          :task_event <> 'completada'
+          OR EXISTS (
+              SELECT 1
+              FROM "DW_CONFIG".usuarios_app AS creator
+              WHERE creator.tipo_documento = split_part(task.usuario_creacion, '-', 1)
+                AND creator.identificacion = split_part(task.usuario_creacion, '-', 2)
+                AND creator.rol_id IN (1, 2)
+          )
+      )
     ON CONFLICT (task_id, token_hash, task_event)
         WHERE task_id IS NOT NULL
     DO NOTHING
@@ -483,7 +508,6 @@ class TareasRepository:
                     _ENQUEUE_TASK_STATUS_NOTIFICATIONS,
                     {
                         "task_id": task["id"],
-                        "operador_id": task["operador_id"],
                         "task_event": "completada",
                     },
                 )
@@ -510,7 +534,6 @@ class TareasRepository:
                 _ENQUEUE_TASK_STATUS_NOTIFICATIONS,
                 {
                     "task_id": task["id"],
-                    "operador_id": task["operador_id"],
                     "task_event": "cerrada",
                 },
             )

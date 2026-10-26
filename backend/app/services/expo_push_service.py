@@ -78,10 +78,16 @@ class ExpoPushClient:
         }.get(status)
         if status_label is None:
             raise ExpoPermanentError("INVALID_TASK_STATUS_EVENT")
+        body = f"La tarea #{task_id} fue {status_label}."
+        if status == "completada":
+            body += (
+                " Revisa las evidencias que dejó el operador y realiza el "
+                "Cierre en SICO de la/s novedad/es."
+            )
         return self._send_message(
             token,
             title="Tienes cambios en tus tareas",
-            body=f"La tarea #{task_id} fue {status_label}.",
+            body=body,
             data={
                 "tipo": "tarea",
                 "evento": "cambio_estado",

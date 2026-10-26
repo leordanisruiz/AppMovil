@@ -1,18 +1,21 @@
 import { Platform } from 'react-native';
 import { httpClient } from '../api/httpClient';
-import { getExpoPushToken, requestNotificationPermission } from './notificationService';
+import {
+  areNativeNotificationsAvailable,
+  getExpoPushToken,
+  requestNotificationPermission,
+} from './notificationService';
 import { tokenStorage } from './tokenStorage';
 
 type RegisterPushTokenResponse = {
   registrado: boolean;
 };
 
-export async function registerDeviceForPushNotifications(
-  operatorCode: string | null,
-): Promise<boolean> {
-  if (!operatorCode?.trim() || (Platform.OS !== 'ios' && Platform.OS !== 'android')) {
+export async function registerDeviceForPushNotifications(): Promise<boolean> {
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
     return false;
   }
+  if (!areNativeNotificationsAvailable()) return false;
 
   const permissionGranted = await requestNotificationPermission();
   if (!permissionGranted) {

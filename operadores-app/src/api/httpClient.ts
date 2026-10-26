@@ -8,6 +8,8 @@ export const apiBaseUrl =
     ? 'http://localhost:8000/api/v1'
     : 'http://172.20.13.56:8000/api/v1');
 
+console.log('EXPO_PUBLIC_API_URL=', process.env.EXPO_PUBLIC_API_URL);
+console.log('API URL=', apiBaseUrl);
 export const httpClient = create({
   baseURL: apiBaseUrl,
   timeout: 15000,

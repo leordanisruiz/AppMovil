@@ -1,13 +1,21 @@
 import { Platform } from 'react-native';
+import { isRunningInExpoGo } from 'expo';
+
+export function areNativeNotificationsAvailable(): boolean {
+  // expo-notifications 58.1.6 can crash on import in Expo Go for Android
+  // because Expo Go does not register ExpoTopicSubscriptionModule.
+  return !(Platform.OS === 'android' && isRunningInExpoGo());
+}
+
 export async function requestNotificationPermission(): Promise<boolean> {
-  if (Platform.OS === 'web') return false;
+  if (Platform.OS === 'web' || !areNativeNotificationsAvailable()) return false;
 
   const notifications = await import('./notificationService.native');
   return notifications.requestNotificationPermission();
 }
 
 export async function getExpoPushToken(): Promise<string | null> {
-  if (Platform.OS === 'web') return null;
+  if (Platform.OS === 'web' || !areNativeNotificationsAvailable()) return null;
 
   const notifications = await import('./notificationService.native');
   return notifications.getExpoPushToken();
@@ -16,14 +24,18 @@ export async function getExpoPushToken(): Promise<string | null> {
 export async function showNewNoveltyNotification(
   newNoveltyCount: number,
 ): Promise<void> {
-  if (Platform.OS === 'web' || newNoveltyCount < 1) return;
+  if (
+    Platform.OS === 'web' ||
+    !areNativeNotificationsAvailable() ||
+    newNoveltyCount < 1
+  ) return;
 
   const notifications = await import('./notificationService.native');
   await notifications.showNewNoveltyNotification(newNoveltyCount);
 }
 
 export async function syncAppBadge(pendingCount: number): Promise<void> {
-  if (Platform.OS === 'web') return;
+  if (Platform.OS === 'web' || !areNativeNotificationsAvailable()) return;
 
   const notifications = await import('./notificationService.native');
   await notifications.syncAppBadge(pendingCount);
@@ -34,7 +46,7 @@ export function subscribeToNoveltyNavigation(
   onNotificationReceived: () => void,
   onOpenTasks: () => void,
 ): () => void {
-  if (Platform.OS === 'web') return () => {};
+  if (Platform.OS === 'web' || !areNativeNotificationsAvailable()) return () => {};
 
   let isActive = true;
   let unsubscribe: (() => void) | undefined;

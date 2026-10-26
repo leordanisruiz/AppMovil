@@ -814,7 +814,7 @@ function toTaskEvidenceAsset(
 ): TaskEvidenceAsset & { size: number } {
   const fileName = asset.fileName || asset.uri.split('/').pop() || `evidencia-${Date.now()}`;
   const extension = fileName.split('.').pop()?.toLowerCase();
-  const mimeType =
+  const detectedMimeType =
     asset.mimeType ??
     (asset.type === 'video'
       ? extension === 'mov'
@@ -827,13 +827,37 @@ function toTaskEvidenceAsset(
           : extension === 'heic' || extension === 'heif'
             ? `image/${extension}`
             : 'image/jpeg');
+  // Android can return camera captures with a UUID and no file extension.
+  // The API validates both MIME type and extension, so make them agree.
+  const mimeType = detectedMimeType.toLowerCase() === 'image/jpg'
+    ? 'image/jpeg'
+    : detectedMimeType.toLowerCase();
+  const expectedExtension = getEvidenceExtension(mimeType);
+  const currentExtension = fileName.split('.').pop()?.toLowerCase();
+  const normalizedFileName = expectedExtension
+    && currentExtension !== expectedExtension
+    ? `${fileName}.${expectedExtension}`
+    : fileName;
   return {
     uri: asset.uri,
-    name: fileName.replace(/[^\w.-]/g, '_'),
+    name: normalizedFileName.replace(/[^\w.-]/g, '_'),
     mimeType,
     size: asset.fileSize ?? 0,
     durationMs: typeof asset.duration === 'number' ? asset.duration : undefined,
   };
+}
+
+function getEvidenceExtension(mimeType: string): string | null {
+  switch (mimeType) {
+    case 'image/jpeg': return 'jpg';
+    case 'image/png': return 'png';
+    case 'image/webp': return 'webp';
+    case 'image/heic': return 'heic';
+    case 'image/heif': return 'heif';
+    case 'video/mp4': return 'mp4';
+    case 'video/quicktime': return 'mov';
+    default: return null;
+  }
 }
 
 function toTaskEvidenceAssetFromDocument(

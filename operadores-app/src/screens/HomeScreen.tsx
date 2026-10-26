@@ -7,6 +7,7 @@ import {
   Modal,
   BackHandler,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -87,6 +88,7 @@ export function HomeScreen() {
   const navigation = useNavigation();
   const operatorCode = operator?.codigo?.trim() || null;
   const canAssignTasks = operator?.rolId === 1 || operator?.rolId === 2;
+  const canRegisterPush = Boolean(operatorCode) || canAssignTasks;
   const {
     data: novedades,
     isLoading,
@@ -167,10 +169,10 @@ export function HomeScreen() {
   }, [activeSection, isMenuOpen]);
 
   useEffect(() => {
-    if (!operatorCode) return undefined;
+    if (!canRegisterPush) return undefined;
 
     let isMounted = true;
-    void registerDeviceForPushNotifications(operatorCode)
+    void registerDeviceForPushNotifications()
       .then(() => {
         if (isMounted) setPushSetupError(null);
       })
@@ -205,7 +207,7 @@ export function HomeScreen() {
     return () => {
       isMounted = false;
     };
-  }, [expireSession, operatorCode]);
+  }, [canRegisterPush, expireSession]);
 
 
   useEffect(() => {
@@ -308,7 +310,10 @@ export function HomeScreen() {
             <Pressable
               accessibilityLabel="Abrir menú de navegación"
               accessibilityRole="button"
-              onPress={() => setIsMenuOpen(true)}
+              onPress={() => {
+                if (Platform.OS === 'web') setIsWelcomeNoticeDismissed(true);
+                setIsMenuOpen(true);
+              }}
               style={styles.menuButton}
             >
               <Text style={styles.menuButtonText}>☰</Text>
@@ -625,7 +630,14 @@ export function HomeScreen() {
               onPress={() => setIsMenuOpen(false)}
               style={styles.backdrop}
             />
-            <View style={styles.sidebar}>
+            <ScrollView
+              style={[
+                styles.sidebar,
+                Platform.OS === 'web' && styles.sidebarWeb,
+              ]}
+              contentContainerStyle={styles.sidebarContent}
+              showsVerticalScrollIndicator={Platform.OS === 'web'}
+            >
               <View style={styles.sidebarHeader}>
                 <Image
                   accessibilityLabel="Logo corporativo"
@@ -721,7 +733,7 @@ export function HomeScreen() {
                 </View>
                 <Text style={styles.sidebarLogoutText}>Cerrar sesión</Text>
               </Pressable>
-            </View>
+            </ScrollView>
           </>
         ) : null}
       </View>
@@ -1480,12 +1492,20 @@ const styles = StyleSheet.create({
     bottom: 0,
     elevation: 8,
     left: 0,
-    paddingHorizontal: spacing.large,
-    paddingTop: spacing.large,
     position: 'absolute',
     top: 0,
     width: 292,
     zIndex: 2,
+  },
+  sidebarWeb: {
+    maxHeight: '100%',
+    overflow: 'scroll',
+  },
+  sidebarContent: {
+    flexGrow: 1,
+    paddingBottom: spacing.large,
+    paddingHorizontal: spacing.large,
+    paddingTop: spacing.large,
   },
   sidebarHeader: {
     alignItems: 'center',

@@ -25,8 +25,8 @@ _POLL_INITIAL_SNAPSHOT = text(
         TRUE
     FROM "DW_SUMA"."FactNovedadesSico" AS fns
     WHERE (
-        UPPER(fns."Estado") IS NULL
-        OR fns."Estado" IN ('PEOCESO', 'PROCESO')
+        fns."Estado" IS NULL
+        OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')
     )
     ON CONFLICT (id_novedad) DO NOTHING
     """
@@ -57,8 +57,8 @@ _POLL_NEW_NOVELTIES = text(
             FALSE
         FROM "DW_SUMA"."FactNovedadesSico" AS fns
         WHERE (
-            UPPER(fns."Estado") IS NULL
-            OR fns."Estado" IN ('PEOCESO', 'PROCESO')
+            fns."Estado" IS NULL
+            OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')
         )
           AND NOT EXISTS (
               SELECT 1
@@ -68,6 +68,19 @@ _POLL_NEW_NOVELTIES = text(
         ON CONFLICT (id_novedad) DO NOTHING
         RETURNING id_novedad, codigo_operador
     )
+    , eligible_novelties AS (
+        SELECT id_novedad, codigo_operador
+        FROM newly_seen
+        UNION ALL
+        SELECT seen.id_novedad, seen.codigo_operador
+        FROM "DW_CONFIG".expo_push_seen_novelties AS seen
+        WHERE seen.historica = FALSE
+          AND NOT EXISTS (
+              SELECT 1
+              FROM newly_seen
+              WHERE newly_seen.id_novedad = seen.id_novedad
+          )
+    )
     INSERT INTO "DW_CONFIG".expo_push_outbox (
         id_novedad,
         token_hash,
@@ -76,19 +89,26 @@ _POLL_NEW_NOVELTIES = text(
         proximo_intento
     )
     SELECT
-        newly_seen.id_novedad,
+        eligible_novelties.id_novedad,
         device.token_hash,
         'pendiente',
         0,
         CURRENT_TIMESTAMP
-    FROM newly_seen
+    FROM eligible_novelties
     JOIN "DW_SUMA"."DimEmpleados" AS employee
-      ON employee."Codigo"::text = newly_seen.codigo_operador::text
-     AND employee."IndicadorActividad" = 'A'
+      ON employee."Codigo"::text = eligible_novelties.codigo_operador::text
+     AND UPPER(BTRIM(employee."IndicadorActividad")) = 'A'
     JOIN "DW_CONFIG".expo_push_tokens AS device
-      ON device.tipo_documento = employee."TipoDocumento"::text
-     AND device.identificacion = employee."Identificacion"::text
+      ON BTRIM(device.tipo_documento) = BTRIM(employee."TipoDocumento"::text)
+     AND BTRIM(device.identificacion) = BTRIM(employee."Identificacion"::text)
      AND device.activo = TRUE
+    JOIN "DW_SUMA"."FactNovedadesSico" AS fns
+      ON fns."Id" = eligible_novelties.id_novedad
+     AND fns."Codigo" = eligible_novelties.codigo_operador
+     AND (
+         fns."Estado" IS NULL
+         OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')
+     )
     ON CONFLICT (id_novedad, token_hash)
         WHERE id_novedad IS NOT NULL
     DO NOTHING

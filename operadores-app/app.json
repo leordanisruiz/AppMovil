@@ -38,13 +38,17 @@
             "usesCleartextTraffic": true
           }
         }
-      ]
+      ],
+      "expo-status-bar",
+      "expo-asset"
     ],
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "package": "com.sumaaplicaciones.portaloperadores",
+      "googleServicesFile": "./google-services.json",
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/brand-logo.png",

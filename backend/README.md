@@ -281,6 +281,9 @@ en estado `PENDIENTE`. Si el operador tiene tokens Expo activos, el envío se
 encola en `expo_push_outbox`; el proceso worker del perfil `push` debe estar
 ejecutándose para entregarlo. Los datos de la notificación abren la sección
 Tareas de la app.
+Cuando el operador completa una tarea, el aviso se envía al usuario creador
+con rol `1` o `2` y solicita revisar las evidencias y cerrar en SICO las
+novedades relacionadas. Al cerrar la tarea, el aviso se envía al operador.
 
 ### Registro de dispositivos y notificaciones Expo
 
@@ -288,7 +291,8 @@ El cliente obtiene el token mediante `expo-notifications` y usa los endpoints
 autenticados siguientes. La identidad se extrae del JWT; no se acepta una
 identificación ni código de operador del cliente para asociar el dispositivo.
 Solo los operadores activos con código numérico positivo pueden registrar
-tokens. Los perfiles administrativos reciben `403`.
+tokens. También pueden registrar dispositivos los usuarios activos con rol
+administrativo `1` o `2`, para recibir avisos de las tareas que asignaron.
 
 Registrar/actualizar el token del dispositivo:
 

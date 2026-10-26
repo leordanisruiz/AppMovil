@@ -1,4 +1,5 @@
 import { StyleSheet, Text, TextInput, View } from 'react-native';
+import type { Ref } from 'react';
 import { colors, radius, spacing, typography } from '../theme';
 
 type FormInputProps = {
@@ -14,6 +15,7 @@ type FormInputProps = {
   onSubmitEditing?: () => void;
   onBlur?: () => void;
   maxLength?: number;
+  inputRef?: Ref<TextInput>;
 };
 
 export function FormInput({
@@ -29,12 +31,14 @@ export function FormInput({
   onSubmitEditing,
   onBlur,
   maxLength,
+  inputRef,
 }: FormInputProps) {
   return (
     <View style={styles.container}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
         accessibilityLabel={label}
+      ref={inputRef}
         autoCapitalize={autoCapitalize}
         autoCorrect={false}
         keyboardType={keyboardType}

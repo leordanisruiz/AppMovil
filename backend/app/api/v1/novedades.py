@@ -55,11 +55,11 @@ def consultar_novedades(
 
 @router.post(
     "/push-tokens",
-    summary="Registrar dispositivo para notificaciones de novedades",
+    summary="Registrar dispositivo para notificaciones del operador o asignador",
     response_model=PushTokenResponse,
     responses={
         401: {"description": "Token de acceso inválido."},
-        403: {"description": "Solo operadores activos pueden registrar el dispositivo."},
+        403: {"description": "Solo operadores activos o usuarios activos con rol 1 o 2 pueden registrar el dispositivo."},
         503: {"description": "El registro de notificaciones no está disponible."},
     },
 )
