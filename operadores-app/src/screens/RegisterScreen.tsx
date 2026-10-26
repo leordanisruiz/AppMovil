@@ -241,7 +241,7 @@ export function RegisterScreen({ navigation }: RegisterScreenProps) {
                 resetValidation();
               }}
               onSubmitEditing={handleValidateIdentity}
-              placeholder="Ingresa tu número de identificación"
+              placeholder="Identificación"
               returnKeyType="done"
               value={identification}
             />

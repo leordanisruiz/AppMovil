@@ -1,8 +1,11 @@
 import { useRef, useState } from 'react';
 import type { Ref } from 'react';
+import type { TextInputInstance } from 'react-native';
 import {
   ActivityIndicator,
   Image,
+  InputAccessoryView,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -24,11 +27,17 @@ export function LoginScreen({ navigation }: LoginScreenProps) {
   const [identificacion, setIdentificacion] = useState('');
   const [password, setPassword] = useState('');
   const [isRegisterHovered, setIsRegisterHovered] = useState(false);
-  const passwordInputRef = useRef<TextInput>(null);
+  const passwordInputRef = useRef<TextInputInstance>(null);
   const { login, isSigningIn, sessionExpired, signInError } = useAuth();
 
   const handleLogin = () => {
+    if (!identificacion.trim() || !password) return;
+    Keyboard.dismiss();
     login({ identificacion: identificacion.trim(), password });
+  };
+
+  const focusPassword = () => {
+    passwordInputRef.current?.focus();
   };
 
   return (
@@ -39,13 +48,7 @@ export function LoginScreen({ navigation }: LoginScreenProps) {
         <View style={styles.decorationDeep} />
       </View>
       <KeyboardAvoidingView
-        behavior={
-          Platform.OS === 'web'
-            ? undefined
-            : Platform.OS === 'ios'
-              ? 'padding'
-              : 'height'
-        }
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
         <ScrollView
@@ -73,7 +76,7 @@ export function LoginScreen({ navigation }: LoginScreenProps) {
                 Platform.OS === 'web' && styles.webFormCard,
               ]}
             >
-              <Text style={styles.formTitle}>Iniciar sesión</Text>
+              
               {sessionExpired ? (
                 <Text accessibilityRole="alert" style={styles.errorText}>
                   Tu sesión expiró o dejó de ser válida. Inicia sesión nuevamente.
@@ -83,23 +86,25 @@ export function LoginScreen({ navigation }: LoginScreenProps) {
                 autoCapitalize="none"
                 icon="user"
                 keyboardType="number-pad"
-                label="Identificación"
+                label=""
                 onChangeText={setIdentificacion}
-                onSubmitEditing={() => passwordInputRef.current?.focus()}
-                placeholder="Ingresa tu número de identificación"
+                onSubmitEditing={focusPassword}
+                placeholder="Identificación"
                 returnKeyType="next"
+                submitBehavior="submit"
+                inputAccessoryViewID={Platform.OS === 'ios' ? 'login-keyboard-actions' : undefined}
                 textContentType="username"
                 value={identificacion}
               />
               <LoginField
                 icon="lock"
                 inputRef={passwordInputRef}
-                keyboardType="number-pad"
-                label="Contraseña"
+                label=""
                 onChangeText={setPassword}
                 onSubmitEditing={handleLogin}
                 placeholder="Ingresa tu contraseña"
                 returnKeyType="done"
+                inputAccessoryViewID={Platform.OS === 'ios' ? 'login-keyboard-actions' : undefined}
                 secureTextEntry
                 textContentType="password"
                 value={password}
@@ -141,6 +146,35 @@ export function LoginScreen({ navigation }: LoginScreenProps) {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+      {Platform.OS === 'ios' ? (
+        <InputAccessoryView nativeID="login-keyboard-actions">
+          <View style={styles.keyboardAccessory}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={focusPassword}
+              style={({ pressed }) => [
+                styles.keyboardAccessoryButton,
+                pressed && styles.keyboardAccessoryButtonPressed,
+              ]}
+            >
+              <Text style={styles.keyboardAccessoryText}>Siguiente</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !identificacion.trim() || !password }}
+              disabled={!identificacion.trim() || !password}
+              onPress={handleLogin}
+              style={({ pressed }) => [
+                styles.keyboardAccessoryButton,
+                pressed && styles.keyboardAccessoryButtonPressed,
+                (!identificacion.trim() || !password) && styles.keyboardAccessoryButtonDisabled,
+              ]}
+            >
+              <Text style={styles.keyboardAccessoryText}>Ingresar</Text>
+            </Pressable>
+          </View>
+        </InputAccessoryView>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -157,7 +191,9 @@ type LoginFieldProps = {
   textContentType?: 'username' | 'password';
   returnKeyType?: 'done' | 'next';
   onSubmitEditing?: () => void;
-  inputRef?: Ref<TextInput>;
+  inputRef?: Ref<TextInputInstance>;
+  submitBehavior?: 'submit' | 'blurAndSubmit';
+  inputAccessoryViewID?: string;
 };
 
 function LoginField({
@@ -173,14 +209,17 @@ function LoginField({
   returnKeyType,
   onSubmitEditing,
   inputRef,
+  submitBehavior,
+  inputAccessoryViewID,
 }: LoginFieldProps) {
-  const [focused, setFocused] = useState(false);
-
   return (
     <View style={styles.fieldContainer}>
       <Text style={styles.fieldLabel}>{label}</Text>
-      <View style={[styles.inputShell, focused && styles.inputShellFocused]}>
-        <View style={[styles.inputIconBox, focused && styles.inputIconBoxFocused]}>
+      <View style={styles.inputShell}>
+        <View
+          pointerEvents="none"
+          style={styles.inputIconBox}
+        >
           <LoginIcon name={icon} />
         </View>
         <TextInput
@@ -188,14 +227,16 @@ function LoginField({
           ref={inputRef}
           autoCapitalize={autoCapitalize}
           autoCorrect={false}
+          submitBehavior={submitBehavior}
           keyboardType={keyboardType}
-          onBlur={() => setFocused(false)}
           onChangeText={onChangeText}
-          onFocus={() => setFocused(true)}
           onSubmitEditing={onSubmitEditing}
+          inputAccessoryViewID={inputAccessoryViewID}
           placeholder={placeholder}
           placeholderTextColor={colors.textMuted}
           returnKeyType={returnKeyType}
+          blurOnSubmit={false}
+          showSoftInputOnFocus
           secureTextEntry={secureTextEntry}
           selectionColor={colors.primary}
           style={styles.input}
@@ -306,12 +347,16 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '14deg' }],
     width: 88,
   },
-  keyboardView: { flex: 1 },
+  keyboardView: {
+    backgroundColor: colors.background,
+    flex: 1,
+  },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     paddingHorizontal: spacing.large,
-    paddingVertical: spacing.xxlarge,
+    paddingTop: spacing.xxlarge,
+    paddingBottom: spacing.xxlarge,
   },
   webScrollContent: {
     alignItems: 'center',
@@ -395,15 +440,6 @@ const styles = StyleSheet.create({
     paddingLeft: spacing.small,
     paddingRight: spacing.medium,
   },
-  inputShellFocused: {
-    backgroundColor: colors.white,
-    borderColor: colors.primary,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.11,
-    shadowRadius: 8,
-    elevation: 2,
-  },
   inputIconBox: {
     alignItems: 'center',
     backgroundColor: '#FFF1F1',
@@ -413,7 +449,6 @@ const styles = StyleSheet.create({
     marginRight: spacing.small,
     width: 36,
   },
-  inputIconBoxFocused: { backgroundColor: '#FFE3E4' },
   input: {
     color: colors.text,
     flex: 1,
@@ -421,6 +456,28 @@ const styles = StyleSheet.create({
     minHeight: 54,
     paddingHorizontal: spacing.xsmall,
     paddingVertical: spacing.small,
+  },
+  keyboardAccessory: {
+    alignItems: 'center',
+    backgroundColor: '#FFF8F8',
+    borderTopColor: '#EEDCDD',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: spacing.medium,
+    paddingVertical: spacing.xsmall,
+  },
+  keyboardAccessoryButton: {
+    borderRadius: radius.small,
+    paddingHorizontal: spacing.medium,
+    paddingVertical: spacing.small,
+  },
+  keyboardAccessoryButtonPressed: { backgroundColor: '#FFE3E4' },
+  keyboardAccessoryButtonDisabled: { opacity: 0.45 },
+  keyboardAccessoryText: {
+    color: colors.primary,
+    fontSize: typography.body,
+    fontWeight: '700',
   },
   userIcon: { alignItems: 'center', height: 20, justifyContent: 'flex-end', width: 20 },
   userHead: {

@@ -2,12 +2,14 @@ import logging
 import mimetypes
 import os
 import re
+import subprocess
 import tempfile
 from collections.abc import Mapping
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, NoReturn
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.exc import SQLAlchemyError
@@ -26,10 +28,13 @@ from app.schemas.tarea import (
     TareaResponse,
     TipoTareaResponse,
 )
+from app.services.evidence_watermark import watermark_image, watermark_video
 
 logger = logging.getLogger(__name__)
 
-MAX_EVIDENCE_FILES = 10
+MAX_EVIDENCE_FILES = 14
+MAX_EVIDENCE_IMAGES = 12
+MAX_EVIDENCE_VIDEOS = 2
 MAX_EVIDENCE_SIZE_BYTES = 100 * 1024 * 1024
 MAX_VIDEO_DURATION_SECONDS = 3 * 60
 UPLOAD_CHUNK_SIZE = 1024 * 1024
@@ -301,6 +306,19 @@ class TareasService:
 
         return [_to_task_response(row) for row in rows]
 
+    def count_not_closed_for_operator(
+        self, db: Session, *, tipo_documento: str, identificacion: str
+    ) -> int:
+        operador_id = self._get_authenticated_operator_id(
+            db, tipo_documento=tipo_documento, identificacion=identificacion
+        )
+        try:
+            return self._tareas_repository.count_not_closed_by_operator(
+                db, operador_id=operador_id
+            )
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("count not closed tasks", exc)
+
     def list_created_by_user(
         self,
         db: Session,
@@ -453,6 +471,7 @@ class TareasService:
         tipo_documento: str,
         identificacion: str,
         files: list[UploadFile],
+        captured_at: list[datetime | None] | None = None,
     ) -> tuple[TareaResponse, int]:
         operador_id = self._get_authenticated_operator_id(
             db,
@@ -484,6 +503,15 @@ class TareasService:
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"Puede adjuntar máximo {MAX_EVIDENCE_FILES} archivos por envío.",
             )
+        existing = current_task.get("evidencias") or []
+        existing_images = sum(item.get("tipo") == "image" for item in existing)
+        existing_videos = sum(item.get("tipo") == "video" for item in existing)
+        incoming_images = sum((file.content_type or "").startswith("image/") for file in files)
+        incoming_videos = sum((file.content_type or "").startswith("video/") for file in files)
+        if existing_images + incoming_images > MAX_EVIDENCE_IMAGES:
+            raise HTTPException(status_code=422, detail="Solo se permiten máximo 12 fotografías por tarea.")
+        if existing_videos + incoming_videos > MAX_EVIDENCE_VIDEOS:
+            raise HTTPException(status_code=422, detail="Solo se permiten máximo 2 videos por tarea.")
 
         evidence_directory = _get_task_evidence_directory(
             identificacion,
@@ -492,12 +520,12 @@ class TareasService:
         )
         staged_paths: list[Path] = []
         final_paths: list[Path] = []
-        evidence_records: list[dict[str, str]] = []
+        evidence_records: list[dict[str, Any]] = []
         total_bytes = 0
 
         try:
             evidence_directory.mkdir(parents=True, exist_ok=True)
-            for upload in files:
+            for index, upload in enumerate(files):
                 suffix, content_type, media_type = _validate_upload(upload)
                 original_name = Path(upload.filename or f"evidencia{suffix}").name
                 safe_name = re.sub(r"[^\w.-]", "_", original_name)[:80]
@@ -515,20 +543,43 @@ class TareasService:
                         detail="El tamaño total de las evidencias supera 100 MB.",
                     )
 
-                final_path = evidence_directory / filename
-                os.replace(temporary_path, final_path)
-                staged_paths.remove(temporary_path)
+                supplied_time = captured_at[index] if captured_at and index < len(captured_at) else None
+                watermark_time = supplied_time or datetime.now(ZoneInfo("America/Bogota"))
+                if watermark_time.tzinfo is None:
+                    watermark_time = watermark_time.replace(tzinfo=ZoneInfo("America/Bogota"))
+                else:
+                    watermark_time = watermark_time.astimezone(ZoneInfo("America/Bogota"))
+                output_suffix = ".jpg" if media_type == "image" else ".mp4"
+                final_filename = f"{Path(filename).stem}{output_suffix}"
+                final_path = evidence_directory / final_filename
                 final_paths.append(final_path)
+                try:
+                    if media_type == "image":
+                        watermark_image(temporary_path, final_path, watermark_time)
+                    else:
+                        watermark_video(temporary_path, final_path, watermark_time)
+                except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                    logger.error(
+                        "Evidence watermark processing failed (%s).",
+                        type(exc).__name__,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail="No fue posible procesar la evidencia para aplicar la marca de fecha y hora.",
+                    ) from exc
+                temporary_path.unlink(missing_ok=True)
+                staged_paths.remove(temporary_path)
                 evidence_records.append(
                     {
-                        "nombre": filename,
+                        "nombre": final_filename,
                         "ruta": _evidence_relative_path(
                             identificacion,
                             tarea_id=tarea_id,
                             novedades_ids=current_task.get("novedades_ids", []),
-                            filename=filename,
+                            filename=final_filename,
                         ),
                         "fecha": date.today().isoformat(),
+                        "fecha_captura": watermark_time.isoformat(),
                         "tipo": media_type,
                     }
                 )
@@ -545,9 +596,28 @@ class TareasService:
                 self._raise_database_unavailable("upload", exc)
 
             if row is None:
+                latest_task = self._get_task_row(
+                    db, tarea_id=tarea_id, operador_id=operador_id
+                )
+                latest_evidence = latest_task.get("evidencias", []) if latest_task else []
+                latest_images = sum(item.get("tipo") == "image" for item in latest_evidence)
+                latest_videos = sum(item.get("tipo") == "video" for item in latest_evidence)
+                if latest_images + incoming_images > MAX_EVIDENCE_IMAGES:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Solo se permiten máximo 12 fotografías por tarea.",
+                    )
+                if latest_videos + incoming_videos > MAX_EVIDENCE_VIDEOS:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Solo se permiten máximo 2 videos por tarea.",
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="La tarea cambió de estado. Actualice la información e intente de nuevo.",
+                    detail=(
+                        "La tarea cambió de estado o excede el límite de 12 fotografías "
+                        "o 2 videos. Actualice la información e intente de nuevo."
+                    ),
                 )
 
         except HTTPException:
@@ -1004,7 +1074,21 @@ def _verify_file_signature(path: Path, media_type: str) -> None:
 
 
 def _verify_video_duration(path: Path) -> None:
-    duration_seconds = _read_iso_bmff_duration_seconds(path)
+    duration_seconds: float | None = None
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        duration_seconds = float(probe.stdout.strip())
+    except (subprocess.SubprocessError, OSError, ValueError):
+        duration_seconds = _read_iso_bmff_duration_seconds(path)
     if duration_seconds is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

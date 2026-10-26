@@ -21,6 +21,7 @@ _EMPLOYEE = {
     "NombreCompleto": "Nombre Apellido",
     "FechaIngreso": None,
     "Cargo": "Administrativo",
+    "Clasificacion": "ADMINISTRATIVO",
     "EstadoEmpleado": "A",
 }
 
@@ -61,12 +62,14 @@ class StubUsuarioAppRepository(UsuarioAppRepository):
         tipo_documento: str,
         identificacion: str,
         password_hash: str,
+        rol_id: int,
     ) -> UsuarioApp:
         del db
         self.user = UsuarioApp(
             tipo_documento=tipo_documento,
             identificacion=identificacion,
             password_hash=password_hash,
+            rol_id=rol_id,
             fecha_creacion=datetime.now(timezone.utc),
         )
         return self.user

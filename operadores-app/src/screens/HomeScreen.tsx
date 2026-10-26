@@ -23,6 +23,7 @@ import { CreatedTasksSection } from '../components/CreatedTasksSection';
 import { getApiErrorMessage } from '../services/authService';
 import { useNovedades } from '../hooks/useNovedades';
 import { useTareas } from '../hooks/useTareas';
+import { useTareasResumen } from '../hooks/useTareasResumen';
 import { useTareasCreadas } from '../hooks/useTareasCreadas';
 import {
   showNewNoveltyNotification,
@@ -97,6 +98,10 @@ export function HomeScreen() {
     isRefetching,
   } = useNovedades(operatorCode);
   const tareasQuery = useTareas(Boolean(operatorCode));
+  const taskCountQuery = useTareasResumen(Boolean(operatorCode));
+  const notClosedTaskCount = taskCountQuery.data ?? tareasQuery.data?.filter(
+    (task) => !['CERRADA', 'CERRADO'].includes(task.estado.trim().toUpperCase()),
+  ).length;
   const createdTasksQuery = useTareasCreadas(canAssignTasks);
   const pendingTaskCount = tareasQuery.data?.filter(
     (task) => task.estado === 'PENDIENTE' || task.estado === 'EN_PROCESO',
@@ -143,13 +148,13 @@ export function HomeScreen() {
           message:
             'Por favor, acercarse a Operaciones en el horario de atención: lunes a viernes de 7:00 am a 5:00 pm. Recuerda resolver tus novedades.',
           noveltyCount: novedades.total,
-          taskCount: tareasQuery.data?.length,
+          taskCount: notClosedTaskCount,
         }
       : !isLoading && novedades?.total === 0
         ? {
             title: 'Bienvenido a la app de SUMA para Operadores',
             message: 'Te felicitamos por tu buen comportamiento, no tienes novedades.',
-            taskCount: tareasQuery.data?.length,
+            taskCount: notClosedTaskCount,
           }
         : null;
 
@@ -753,6 +758,7 @@ function ProfileRow({ label, value }: { label: string; value: string }) {
 function NovedadesTable({ rows }: { rows: Novedad[] }) {
   const pageSize = 5;
   const [currentPage, setCurrentPage] = useState(1);
+  const [selectedNovelty, setSelectedNovelty] = useState<Novedad | null>(null);
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const page = Math.min(currentPage, pageCount);
   const startIndex = (page - 1) * pageSize;
@@ -771,8 +777,11 @@ function NovedadesTable({ rows }: { rows: Novedad[] }) {
           const isOpenStatus = /^(ABIERTO|ABIERTA|EN PROCESO|PROCESO)$/i.test(status);
 
           return (
-            <View
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Ver detalle de la novedad ${novedad.IdNovedad}`}
               key={novedad.IdNovedad}
+              onPress={() => setSelectedNovelty(novedad)}
               style={[styles.tableRow, index % 2 === 1 && styles.tableRowAlternate]}
             >
               <Text style={[styles.tableCell, styles.idColumn, styles.idCell]}>
@@ -799,7 +808,7 @@ function NovedadesTable({ rows }: { rows: Novedad[] }) {
                   </Text>
                 </View>
               </View>
-            </View>
+            </Pressable>
           );
         })}
         <View style={styles.pagination}>
@@ -850,6 +859,55 @@ function NovedadesTable({ rows }: { rows: Novedad[] }) {
           </View>
         </View>
       </View>
+      <Modal
+        animationType="slide"
+        onRequestClose={() => setSelectedNovelty(null)}
+        transparent
+        visible={selectedNovelty !== null}
+      >
+        <View style={styles.noveltyModalBackdrop}>
+          <Pressable
+            accessibilityLabel="Cerrar detalle de novedad"
+            accessibilityRole="button"
+            onPress={() => setSelectedNovelty(null)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.noveltyModalCard}>
+            <View style={styles.noveltyModalHandle} />
+            <Text style={styles.noveltyModalTitle}>Detalle de novedad</Text>
+            <ScrollView contentContainerStyle={styles.noveltyModalContent}>
+              {selectedNovelty ? (
+                <>
+                  <NoveltyDetail label="ID Novedad" value={String(selectedNovelty.IdNovedad)} />
+                  <NoveltyDetail label="Fecha Novedad" value={formatNoveltyDate(selectedNovelty.FechaNovedad)} />
+                  <NoveltyDetail label="Estado" value={selectedNovelty.Estado} />
+                  <NoveltyDetail label="Tipo Novedad" value={selectedNovelty.TipoNovedad} />
+                  <NoveltyDetail label="Grupo" value={selectedNovelty.Grupo} />
+                  <NoveltyDetail label="Subgrupo" value={selectedNovelty.Subgrupo} />
+                  <NoveltyDetail label="Novedad" value={selectedNovelty.Novedad} />
+                  <NoveltyDetail label="Descripción" value={selectedNovelty.Descripcion} />
+                </>
+              ) : null}
+            </ScrollView>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setSelectedNovelty(null)}
+              style={styles.noveltyModalClose}
+            >
+              <Text style={styles.noveltyModalCloseText}>Cerrar</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+function NoveltyDetail({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <View style={styles.noveltyDetailItem}>
+      <Text style={styles.noveltyDetailLabel}>{label}</Text>
+      <Text style={styles.noveltyDetailValue}>{value?.trim() || 'Sin información'}</Text>
     </View>
   );
 }
@@ -1261,6 +1319,65 @@ const styles = StyleSheet.create({
     borderRadius: radius.large,
     borderWidth: 1,
     overflow: 'hidden',
+  },
+  noveltyModalBackdrop: {
+    backgroundColor: 'rgba(16, 22, 30, 0.5)',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  noveltyModalCard: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: radius.large,
+    borderTopRightRadius: radius.large,
+    maxHeight: '82%',
+    padding: spacing.large,
+  },
+  noveltyModalHandle: {
+    alignSelf: 'center',
+    backgroundColor: colors.border,
+    borderRadius: radius.pill,
+    height: 4,
+    marginBottom: spacing.medium,
+    width: 42,
+  },
+  noveltyModalTitle: {
+    color: colors.text,
+    fontSize: typography.heading,
+    fontWeight: '800',
+    marginBottom: spacing.medium,
+  },
+  noveltyModalContent: {
+    gap: spacing.medium,
+    paddingBottom: spacing.medium,
+  },
+  noveltyDetailItem: {
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: spacing.xsmall,
+    paddingBottom: spacing.small,
+  },
+  noveltyDetailLabel: {
+    color: colors.textMuted,
+    fontSize: typography.small,
+    fontWeight: '700',
+  },
+  noveltyDetailValue: {
+    color: colors.text,
+    fontSize: typography.caption,
+    lineHeight: 21,
+  },
+  noveltyModalClose: {
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: radius.medium,
+    justifyContent: 'center',
+    marginTop: spacing.medium,
+    minHeight: 48,
+  },
+  noveltyModalCloseText: {
+    color: colors.white,
+    fontSize: typography.caption,
+    fontWeight: '800',
   },
   tableContainer: {
     padding: spacing.medium,

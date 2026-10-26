@@ -1,4 +1,5 @@
 import { StyleSheet, Text, TextInput, View } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import type { Ref } from 'react';
 import { colors, radius, spacing, typography } from '../theme';
 
@@ -15,7 +16,7 @@ type FormInputProps = {
   onSubmitEditing?: () => void;
   onBlur?: () => void;
   maxLength?: number;
-  inputRef?: Ref<TextInput>;
+  inputRef?: Ref<TextInputInstance>;
 };
 
 export function FormInput({

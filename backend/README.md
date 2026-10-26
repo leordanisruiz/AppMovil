@@ -186,6 +186,9 @@ contador sin recalcularlo:
       "FechaNovedad": "2026-10-19T08:30:00",
       "Codigo": 809772,
       "TipoNovedad": "OPERATIVA",
+      "Grupo": "OPERACIÓN",
+      "Subgrupo": "VEHÍCULO",
+      "Novedad": "EJEMPLO",
       "Descripcion": "Descripción de ejemplo",
       "Estado": "PROCESO"
     }
@@ -218,13 +221,15 @@ Endpoints autenticados:
 - `POST /api/v1/tareas/asignacion`: crea la tarea para un operador y una o
   varias novedades abiertas.
 - `GET /api/v1/tareas`: lista las tareas asignadas al operador autenticado.
+- `GET /api/v1/tareas/resumen/activas`: cuenta las tareas del operador cuyo estado
+  no sea `CERRADA` ni `CERRADO`; se usa en el mensaje de bienvenida.
 - `GET /api/v1/tareas/{id}`: devuelve detalle y metadatos de evidencias.
 - `GET /api/v1/tareas/{id}/evidencias/{nombre}`: entrega un archivo solo si
   pertenece a una tarea del operador autenticado.
 - `POST /api/v1/tareas/{id}/evidencias`: recibe archivos multipart en el campo
-  `files`. Acepta JPG, PNG, WebP, HEIC, MP4 y MOV; máximo 10 archivos y 100 MB
-  combinados por solicitud. Valida extensión, tipo declarado y firma básica
-  del archivo.
+  `files` y fechas opcionales en los campos `captured_at` correspondientes. Acepta
+  JPG, PNG, WebP, HEIC, MP4 y MOV; máximo 12 fotos y 2 videos por tarea, con 100 MB
+  combinados por solicitud. Valida extensión, tipo declarado, firma y duración.
 - `PATCH /api/v1/tareas/{id}/estado`: permite pasar a `EN_PROCESO` o
   `COMPLETADA`. Subir evidencia cambia automáticamente una tarea
   `PENDIENTE` a `EN_PROCESO`; completarla exige al menos una evidencia y no
@@ -239,10 +244,30 @@ su carpeta original. En ejecución directa sobre Windows, el valor de `.env` pue
 `EVIDENCIAS_PATH=\\172.20.10.32\web`. La cuenta del proceso necesita permisos
 de lectura/escritura sobre el recurso compartido.
 
+El servidor incrusta la fecha y hora en el contenido antes de guardar: procesa
+fotografías con Pillow (incluyendo HEIC/HEIF mediante pillow-heif) y videos con
+FFmpeg. Las fotos se normalizan a JPEG y los videos a MP4; los originales no se
+conservan. Docker instala FFmpeg y la fuente DejaVu. En ejecución directa fuera
+de Docker también deben instalarse FFmpeg con el filtro `drawtext`, fuentes
+DejaVu y las dependencias Python de `requirements.txt`. Las capturas hechas en
+la app mandan la hora del dispositivo; para galería se usa EXIF si está presente,
+para archivos la última modificación si está disponible, y como último recurso
+la hora de recepción del servidor (zona `America/Bogota`). La hora queda visible
+en la evidencia descargada o compartida.
+
+Expo solicita un máximo de 120 segundos a la cámara nativa. El comportamiento de
+auto-detención depende de la cámara del sistema; por ello el cliente y el backend
+también rechazan cualquier archivo que supere dos minutos.
+
 Docker corre Linux y no puede usar directamente una ruta UNC de Windows. Monte
 el recurso SMB en el host/container y configure, por ejemplo,
 `EVIDENCIAS_HOST_PATH=/ruta/montada/en/el/host` y
 `EVIDENCIAS_CONTAINER_PATH=/mnt/evidencias`; Compose monta esa raíz en la API.
+`EVIDENCIAS_HOST_PATH` es la ruta del host para el bind mount y tiene prioridad;
+si no se define, Compose usa `EVIDENCIAS_PATH` como ruta de origen del montaje.
+La ruta del host debe ser accesible por Docker. En Windows, comparta/mapee el
+recurso SMB para Docker Desktop o ejecute la API directamente con una cuenta que
+tenga permiso de escritura en `\\172.20.10.32\web`.
 La ruta dentro del contenedor debe existir y tener permisos para el usuario
 del proceso.
 

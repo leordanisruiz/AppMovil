@@ -10,6 +10,7 @@ export type TaskEvidence = {
   ruta: string;
   fecha: string;
   tipo: TaskEvidenceType;
+  fecha_captura?: string | null;
 };
 
 export type OperatorTask = {
@@ -36,6 +37,9 @@ export type AssignableNovelty = {
   fecha_novedad: string | null;
   codigo: number;
   tipo_novedad: string | null;
+  grupo?: string | null;
+  subgrupo?: string | null;
+  novedad?: string | null;
   descripcion: string | null;
   estado: string | null;
   tipo_documento?: string | null;
@@ -66,4 +70,5 @@ export type TaskEvidenceAsset = {
   mimeType: string;
   size?: number;
   durationMs?: number;
+  capturedAt?: string;
 };

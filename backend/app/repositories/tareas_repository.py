@@ -62,7 +62,10 @@ _OPERATOR_NOVELTIES = text(
         fns."Id" AS id_novedad,
         fns."FechaIngreso" AS fecha_novedad,
         fns."Codigo" AS codigo,
-        fns."Grupo" AS tipo_novedad,
+        fns."TipoNovedad" AS tipo_novedad,
+        fns."Grupo" AS grupo,
+        fns."Sub Grupo" AS subgrupo,
+        fns."Novedad" AS novedad,
         fns."Detalle" AS descripcion,
         fns."Estado" AS estado
     FROM "DW_SUMA"."FactNovedadesSico" AS fns
@@ -93,7 +96,10 @@ _NOVELTY_BY_ID = text(
         fns."Id" AS id_novedad,
         fns."FechaIngreso" AS fecha_novedad,
         fns."Codigo" AS codigo,
-        fns."Grupo" AS tipo_novedad,
+        fns."TipoNovedad" AS tipo_novedad,
+        fns."Grupo" AS grupo,
+        fns."Sub Grupo" AS subgrupo,
+        fns."Novedad" AS novedad,
         fns."Detalle" AS descripcion,
         fns."Estado" AS estado,
         de."TipoDocumento" AS tipo_documento,
@@ -249,6 +255,16 @@ _LIST_BY_OPERATOR = text(
     """
 )
 
+_COUNT_NOT_CLOSED_BY_OPERATOR = text(
+    '''
+    SELECT COUNT(*)::int AS total
+    FROM "DW_OPERACIONAL".tareas_operador
+    WHERE operador_id = :operador_id
+      AND UPPER(BTRIM(COALESCE(estado, ''))) <> 'CERRADA'
+      AND UPPER(BTRIM(COALESCE(estado, ''))) <> 'CERRADO'
+    '''
+)
+
 _LIST_BY_CREATOR = text(
     f"""
     SELECT {_TASK_COLUMNS}
@@ -290,6 +306,16 @@ _APPEND_EVIDENCES = text(
     WHERE id = :tarea_id
       AND operador_id = :operador_id
       AND estado NOT IN ('COMPLETADA', 'CERRADO')
+      AND (
+          SELECT COUNT(*)
+          FROM jsonb_array_elements(COALESCE(evidencias->'evidencias', '[]'::jsonb)) AS item(value)
+          WHERE value->>'tipo' = 'image'
+      ) + :image_count <= 12
+      AND (
+          SELECT COUNT(*)
+          FROM jsonb_array_elements(COALESCE(evidencias->'evidencias', '[]'::jsonb)) AS item(value)
+          WHERE value->>'tipo' = 'video'
+      ) + :video_count <= 2
     RETURNING {_TASK_COLUMNS}
     """
 )
@@ -423,6 +449,9 @@ class TareasRepository:
         result = db.execute(_LIST_BY_OPERATOR, {"operador_id": operador_id})
         return list(result.mappings().all())
 
+    def count_not_closed_by_operator(self, db: Session, *, operador_id: int) -> int:
+        return int(db.execute(_COUNT_NOT_CLOSED_BY_OPERATOR, {"operador_id": operador_id}).scalar_one())
+
     def list_by_creator(
         self,
         db: Session,
@@ -478,6 +507,8 @@ class TareasRepository:
                 "tarea_id": tarea_id,
                 "operador_id": operador_id,
                 "evidencias": json.dumps(evidencias),
+                "image_count": sum(item.get("tipo") == "image" for item in evidencias),
+                "video_count": sum(item.get("tipo") == "video" for item in evidencias),
             },
         )
         task = result.mappings().one_or_none()

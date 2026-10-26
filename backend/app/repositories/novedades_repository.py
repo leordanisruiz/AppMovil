@@ -10,7 +10,10 @@ _NOVEDADES_BY_OPERATOR_CODE_QUERY = text(
         fns."Id" AS "IdNovedad",
         fns."FechaIngreso" AS "FechaNovedad",
         fns."Codigo" AS "Codigo",
-        fns."Grupo" AS "TipoNovedad",
+        fns."TipoNovedad" AS "TipoNovedad",
+        fns."Grupo" AS "Grupo",
+        fns."Sub Grupo" AS "Subgrupo",
+        fns."Novedad" AS "Novedad",
         fns."Detalle" AS "Descripcion",
         fns."Estado" AS "Estado"
     FROM "DW_SUMA"."FactNovedadesSico" AS fns

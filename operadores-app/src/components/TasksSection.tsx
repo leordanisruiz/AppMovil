@@ -34,7 +34,9 @@ type TasksSectionProps = {
   operatorCode: string | null;
 };
 
-const MAX_SELECTED_FILES = 10;
+const MAX_PHOTOS_PER_TASK = 12;
+const MAX_VIDEOS_PER_TASK = 2;
+const MAX_SELECTED_FILES = MAX_PHOTOS_PER_TASK + MAX_VIDEOS_PER_TASK;
 const MAX_SELECTED_SIZE = 100 * 1024 * 1024;
 const MAX_VIDEO_DURATION_MS = 3 * 60 * 1000;
 const SUPPORTED_EVIDENCE_TYPES = new Set([
@@ -142,6 +144,21 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
     }
     const additions = assets
       .filter((asset) => !selectedAssets.some((selected) => selected.uri === asset.uri));
+    const existingEvidence = detailQuery.data?.evidencias ?? [];
+    const photoCount = existingEvidence.filter((item) => item.tipo === 'image').length
+      + selectedAssets.filter((item) => item.mimeType.startsWith('image/')).length;
+    const videoCount = existingEvidence.filter((item) => item.tipo === 'video').length
+      + selectedAssets.filter((item) => item.mimeType.startsWith('video/')).length;
+    const addedPhotos = additions.filter((item) => item.mimeType.startsWith('image/')).length;
+    const addedVideos = additions.filter((item) => item.mimeType.startsWith('video/')).length;
+    if (photoCount + addedPhotos > MAX_PHOTOS_PER_TASK) {
+      Alert.alert('Límite de fotografías', 'Solo se permiten máximo 12 fotografías por tarea.');
+      return;
+    }
+    if (videoCount + addedVideos > MAX_VIDEOS_PER_TASK) {
+      Alert.alert('Límite de videos', 'Solo se permiten máximo 2 videos por tarea.');
+      return;
+    }
     if (selectedAssets.length + additions.length > MAX_SELECTED_FILES) {
       Alert.alert(
         'Límite de archivos',
@@ -158,7 +175,7 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
     if (videosOverLimit.length > 0) {
       Alert.alert(
         'Video demasiado largo',
-        'Solo se permiten videos de hasta 3 minutos para evitar sobrecargar el almacenamiento del servidor.',
+        'Solo se permiten videos de hasta 3 minutos. Graba o selecciona un video más corto.',
       );
       return;
     }
@@ -218,52 +235,51 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
       }
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
+        exif: true,
         quality: 0.8,
       });
-      if (!result.canceled) addAssets(result.assets.map(toTaskEvidenceAsset));
+      if (!result.canceled) addAssets(result.assets.map((asset) => toTaskEvidenceAsset(asset, true)));
     } catch (error) {
       showPickerError(error);
     }
   };
 
-  const chooseImages = async () => {
+  const recordVideo = async () => {
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
-          'Permiso de galería requerido',
-          'Permite el acceso a tus fotos para seleccionarlas. También puedes usar “Buscar en archivos” para elegir una imagen o video.',
-        );
+        Alert.alert('Permiso de cámara requerido', 'Permite el acceso a la cámara para grabar un video.');
         return;
       }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsMultipleSelection: true,
-        selectionLimit: MAX_SELECTED_FILES,
-        quality: 0.8,
-      });
-      if (!result.canceled) addAssets(result.assets.map(toTaskEvidenceAsset));
-    } catch (error) {
-      showPickerError(error);
-    }
-  };
-
-  const chooseVideos = async () => {
-    try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          'Permiso de galería requerido',
-          'Permite el acceso a tus videos para seleccionarlos. También puedes usar “Buscar en archivos” para elegir una imagen o video.',
-        );
-        return;
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
+      const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['videos'],
+        videoMaxDuration: 120,
+        quality: 0.7,
+      });
+      if (!result.canceled) addAssets(result.assets.map((asset) => toTaskEvidenceAsset(asset, true)));
+    } catch (error) {
+      showPickerError(error);
+    }
+  };
+
+  const chooseGallery = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          'Permiso de galería requerido',
+          'Permite el acceso a fotos y videos para seleccionarlos. También puedes usar “Seleccionar Archivo”.',
+        );
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
         allowsMultipleSelection: true,
         selectionLimit: MAX_SELECTED_FILES,
+        exif: true,
+        quality: 0.8,
       });
-      if (!result.canceled) addAssets(result.assets.map(toTaskEvidenceAsset));
+      if (!result.canceled) addAssets(result.assets.map((asset) => toTaskEvidenceAsset(asset)));
     } catch (error) {
       showPickerError(error);
     }
@@ -371,8 +387,8 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
           onDismiss={() => void runPendingPickerAction()}
           onClose={() => setIsSourcePickerVisible(false)}
           onTakePhoto={() => launchPickerAfterDismiss(takePhoto)}
-          onChooseImages={() => launchPickerAfterDismiss(chooseImages)}
-          onChooseVideos={() => launchPickerAfterDismiss(chooseVideos)}
+          onRecordVideo={() => launchPickerAfterDismiss(recordVideo)}
+          onChooseGallery={() => launchPickerAfterDismiss(chooseGallery)}
           onChooseFiles={() => launchPickerAfterDismiss(chooseFiles)}
         />
         <TaskCompletionConfirmModal
@@ -745,16 +761,16 @@ function MediaSourcePicker({
   onDismiss,
   onClose,
   onTakePhoto,
-  onChooseImages,
-  onChooseVideos,
+  onRecordVideo,
+  onChooseGallery,
   onChooseFiles,
 }: {
   visible: boolean;
   onDismiss: () => void;
   onClose: () => void;
   onTakePhoto: () => void;
-  onChooseImages: () => void;
-  onChooseVideos: () => void;
+  onRecordVideo: () => void;
+  onChooseGallery: () => void;
   onChooseFiles: () => void;
 }) {
   return (
@@ -776,10 +792,10 @@ function MediaSourcePicker({
           <View style={styles.pickerHandle} />
           <Text style={styles.cardTitle}>Adjuntar evidencia</Text>
           <Text style={styles.bodyText}>Elige cómo quieres agregar tus archivos.</Text>
-          <MediaSourceButton icon="◎" label="Tomar fotografía" onPress={onTakePhoto} />
-          <MediaSourceButton icon="▧" label="Elegir fotos" onPress={onChooseImages} />
-          <MediaSourceButton icon="▶" label="Elegir videos" onPress={onChooseVideos} />
-          <MediaSourceButton icon="▤" label="Buscar en archivos" onPress={onChooseFiles} />
+          <MediaSourceButton icon="◉" label="Tomar Foto" onPress={onTakePhoto} />
+          <MediaSourceButton icon="▶" label="Grabar Video" onPress={onRecordVideo} />
+          <MediaSourceButton icon="▧" label="Seleccionar de Galería" onPress={onChooseGallery} />
+          <MediaSourceButton icon="▤" label="Seleccionar Archivo" onPress={onChooseFiles} />
           <Pressable accessibilityRole="button" onPress={onClose} style={styles.cancelButton}>
             <Text style={styles.cancelButtonText}>Cancelar</Text>
           </Pressable>
@@ -811,6 +827,7 @@ function MediaSourceButton({
 
 function toTaskEvidenceAsset(
   asset: ImagePicker.ImagePickerAsset,
+  capturedNow = false,
 ): TaskEvidenceAsset & { size: number } {
   const fileName = asset.fileName || asset.uri.split('/').pop() || `evidencia-${Date.now()}`;
   const extension = fileName.split('.').pop()?.toLowerCase();
@@ -844,6 +861,9 @@ function toTaskEvidenceAsset(
     mimeType,
     size: asset.fileSize ?? 0,
     durationMs: typeof asset.duration === 'number' ? asset.duration : undefined,
+    capturedAt: capturedNow
+      ? new Date(Date.now() - (asset.type === 'video' ? asset.duration ?? 0 : 0)).toISOString()
+      : parseExifCaptureTime(asset.exif?.DateTimeOriginal),
   };
 }
 
@@ -872,7 +892,16 @@ function toTaskEvidenceAssetFromDocument(
     name: asset.name.replace(/[^\w.-]/g, '_'),
     mimeType,
     size: asset.size,
+    capturedAt: asset.lastModified ? new Date(asset.lastModified).toISOString() : undefined,
   };
+}
+
+function parseExifCaptureTime(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(value);
+  if (!match) return undefined;
+  const [, year, month, day, hour, minute, second] = match;
+  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}-05:00`).toISOString();
 }
 
 function getMimeTypeFromFileName(fileName: string): string | null {

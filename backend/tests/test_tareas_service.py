@@ -327,7 +327,7 @@ class TareasServiceTests(unittest.TestCase):
         self.task_repository.get_by_id.return_value = pending_task
         self.task_repository.append_evidences.return_value = uploaded_task
         upload = UploadFile(
-            file=BytesIO(b"\x89PNG\r\n\x1a\n" + b"image-data"),
+            file=BytesIO(_build_png_bytes()),
             filename="evidence.png",
             headers=Headers({"content-type": "image/png"}),
         )
@@ -569,6 +569,15 @@ def _evidence_record(
         "fecha": "2026-10-20",
         "tipo": tipo,
     }
+
+
+def _build_png_bytes() -> bytes:
+    """Genera un PNG real porque la evidencia pasa por la marca de agua."""
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (32, 32), (200, 30, 30)).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _build_mp4_with_duration_seconds(duration_seconds: int) -> bytes:

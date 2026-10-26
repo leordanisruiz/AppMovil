@@ -70,6 +70,11 @@ export const tareasService = {
     return response.data;
   },
 
+  async getNotClosedCount(): Promise<number> {
+    const response = await httpClient.get<number>('/tareas/resumen/activas');
+    return response.data;
+  },
+
   async getCreated(): Promise<OperatorTask[]> {
     const response = await httpClient.get<OperatorTask[]>('/tareas/creadas');
     return response.data;
@@ -105,12 +110,13 @@ export const tareasService = {
         name: asset.name,
         type: asset.mimeType,
       });
+      formData.append('captured_at', asset.capturedAt ?? new Date().toISOString());
     }
 
     const response = await httpClient.post<UploadEvidenceResponse>(
       `/tareas/${taskId}/evidencias`,
       formData,
-      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120_000 },
+      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 600_000 },
     );
     return response.data;
   },

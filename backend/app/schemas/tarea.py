@@ -15,6 +15,7 @@ class Evidencia(BaseModel):
     ruta: str = Field(min_length=1, max_length=512)
     fecha: date
     tipo: EvidenceType = "image"
+    fecha_captura: datetime | None = None
 
 
 class TareaResponse(BaseModel):
@@ -58,6 +59,9 @@ class NovedadAsignacion(BaseModel):
     fecha_novedad: date | datetime | None
     codigo: int
     tipo_novedad: str | None
+    grupo: str | None = None
+    subgrupo: str | None = None
+    novedad: str | None = None
     descripcion: str | None
     estado: str | None
     tipo_documento: str | None = None

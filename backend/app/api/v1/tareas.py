@@ -1,11 +1,13 @@
 import logging
 import mimetypes
+from datetime import datetime
 from typing import Any
 
 from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     HTTPException,
     Request,
     UploadFile,
@@ -149,6 +151,14 @@ def listar_tareas(
     )
 
 
+@router.get("/resumen/activas", response_model=int, summary="Contar tareas distintas de cerradas")
+def contar_tareas_no_cerradas(request: Request, db: Session = Depends(get_db)) -> int:
+    tipo_documento, identificacion = _authenticated_identity(request)
+    return tareas_service.count_not_closed_for_operator(
+        db, tipo_documento=tipo_documento, identificacion=identificacion
+    )
+
+
 @router.get(
     "/creadas",
     response_model=list[TareaResponse],
@@ -239,6 +249,7 @@ def subir_evidencias(
     tarea_id: int,
     request: Request,
     files: list[UploadFile] = File(...),
+    captured_at: list[datetime | None] | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> TareaEvidenciasResponse:
     tipo_documento, identificacion = _authenticated_identity(request)
@@ -248,6 +259,7 @@ def subir_evidencias(
         tipo_documento=tipo_documento,
         identificacion=identificacion,
         files=files,
+        captured_at=captured_at,
     )
     return TareaEvidenciasResponse(
         tarea=task,

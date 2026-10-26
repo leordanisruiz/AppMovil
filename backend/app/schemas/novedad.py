@@ -20,6 +20,9 @@ class Novedad(BaseModel):
     FechaNovedad: date | datetime | None
     Codigo: int | None
     TipoNovedad: str | None
+    Grupo: str | None = None
+    Subgrupo: str | None = None
+    Novedad: str | None = None
     Descripcion: str | None
     Estado: str | None
 

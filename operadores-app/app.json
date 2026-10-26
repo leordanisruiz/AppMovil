@@ -19,7 +19,7 @@
         {
           "photosPermission": "Portal Operadores necesita acceso a tus fotos para adjuntarlas como evidencia.",
           "cameraPermission": "Portal Operadores necesita acceso a la cámara para tomar evidencias.",
-          "microphonePermission": false
+          "microphonePermission": "Portal Operadores necesita acceso al micrófono para incluir audio en las evidencias de video."
         }
       ],
       "expo-video",

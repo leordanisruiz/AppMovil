@@ -70,7 +70,7 @@ class PushNotificationRepositoryTests(unittest.TestCase):
         discovery_sql = str(push_notification_repository._POLL_NEW_NOVELTIES)
         self.assertIn('"DW_SUMA"."FactNovedadesSico"', discovery_sql)
         self.assertIn('"DW_SUMA"."DimEmpleados"', discovery_sql)
-        self.assertIn("employee.\"IndicadorActividad\" = 'A'", discovery_sql)
+        self.assertIn('UPPER(BTRIM(employee."IndicadorActividad")) = \'A\'', discovery_sql)
         self.assertIn("device.activo = TRUE", discovery_sql)
         self.assertIn(
             "ON CONFLICT (id_novedad, token_hash)",

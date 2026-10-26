@@ -1,5 +1,6 @@
 import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import { AndroidImportance } from 'expo-notifications';
 import Constants from 'expo-constants';
 
 export const NOVELTY_CHANNEL_ID = 'novedades';
@@ -8,7 +9,7 @@ export const TASK_CHANNEL_ID = 'tareas';
 type AndroidChannel = {
   id: string;
   name: string;
-  importance: Notifications.AndroidImportance;
+  importance: AndroidImportance;
   vibrationPattern: number[];
   lightColor: string;
 };
@@ -17,14 +18,14 @@ const ANDROID_CHANNELS: AndroidChannel[] = [
   {
     id: NOVELTY_CHANNEL_ID,
     name: 'Novedades',
-    importance: Notifications.AndroidImportance.HIGH,
+    importance: AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 250, 250],
     lightColor: '#FF0000',
   },
   {
     id: TASK_CHANNEL_ID,
     name: 'Tareas asignadas',
-    importance: Notifications.AndroidImportance.MAX,
+    importance: AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
     lightColor: '#FF0000',
   },
