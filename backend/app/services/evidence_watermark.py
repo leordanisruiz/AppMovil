@@ -1,7 +1,10 @@
 """Bake a local capture timestamp into evidence before permanent storage."""
 
 from datetime import datetime
+import glob
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
@@ -44,16 +47,24 @@ def watermark_video(source: Path, destination: Path, captured_at: datetime) -> N
     with tempfile.TemporaryDirectory(prefix="evidence-watermark-") as temp_dir:
         text_file = Path(temp_dir) / "timestamp.txt"
         text_file.write_text(label, encoding="utf-8")
+        font_file = (
+            Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "arial.ttf"
+            if os.name == "nt"
+            else Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+        )
+        font_path = _escape_filter_path(font_file)
+        text_path = _escape_filter_path(text_file)
         filter_value = (
-            "drawtext=font='DejaVu Sans':fontsize=h*0.035:fontcolor=white:"
+            # Use an explicit platform font and escape paths for FFmpeg's filter parser.
+            f"drawtext=fontfile='{font_path}':"
+            "fontsize=h*0.035:fontcolor=white:"
             "box=1:boxcolor=0x0C141E@0.75:boxborderw=12:"
-            "x=w-text_w-24:y=h-text_h-24:textfile='"
-            + text_file.as_posix()
-            + "':reload=0"
+            f"x=w-text_w-24:y=h-text_h-24:textfile='{text_path}':reload=0"
         )
         subprocess.run(
             [
-                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
+                resolve_ffmpeg_executable("ffmpeg"),
+                "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
                 "-vf", filter_value, "-map", "0:v:0", "-map", "0:a?",
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
@@ -63,3 +74,36 @@ def watermark_video(source: Path, destination: Path, captured_at: datetime) -> N
             capture_output=True,
             timeout=600,
         )
+
+
+def _escape_filter_path(path: Path) -> str:
+    """Escape a path used as a quoted FFmpeg filter option value."""
+    return path.resolve().as_posix().replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
+def resolve_ffmpeg_executable(name: str) -> str:
+    """Find FFmpeg tools on PATH or in a standard per-user winget install."""
+    configured = os.environ.get(f"{name.upper()}_PATH")
+    if configured:
+        return configured
+
+    executable = shutil.which(name)
+    if executable:
+        return executable
+
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            package_root = Path(local_app_data) / "Microsoft" / "WinGet" / "Packages"
+            pattern = str(
+                package_root
+                / "Gyan.FFmpeg.Shared_*"
+                / "ffmpeg-*-full_build-shared"
+                / "bin"
+                / f"{name}.exe"
+            )
+            matches = glob.glob(pattern)
+            if matches:
+                return matches[-1]
+
+    return name

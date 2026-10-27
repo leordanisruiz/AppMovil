@@ -61,7 +61,6 @@ class NovedadAsignacion(BaseModel):
     tipo_novedad: str | None
     grupo: str | None = None
     subgrupo: str | None = None
-    novedad: str | None = None
     descripcion: str | None
     estado: str | None
     tipo_documento: str | None = None

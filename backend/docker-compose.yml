@@ -8,6 +8,8 @@ services:
       APP_NAME: ${APP_NAME:-AppMovil API}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       API_V1_PREFIX: ${API_V1_PREFIX:-/api/v1}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://127.0.0.1:8081}
+      CORS_ORIGIN_REGEX: ${CORS_ORIGIN_REGEX:-}
       LOG_DIR: ${LOG_DIR:-/backend/logs}
       DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL con la conexion a Kactus en .env}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Define JWT_SECRET_KEY en .env}

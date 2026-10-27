@@ -28,7 +28,11 @@ from app.schemas.tarea import (
     TareaResponse,
     TipoTareaResponse,
 )
-from app.services.evidence_watermark import watermark_image, watermark_video
+from app.services.evidence_watermark import (
+    resolve_ffmpeg_executable,
+    watermark_image,
+    watermark_video,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -559,9 +563,13 @@ class TareasService:
                     else:
                         watermark_video(temporary_path, final_path, watermark_time)
                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                    diagnostic = getattr(exc, "stderr", None)
+                    if isinstance(diagnostic, bytes):
+                        diagnostic = diagnostic.decode("utf-8", errors="replace")
                     logger.error(
-                        "Evidence watermark processing failed (%s).",
+                        "Evidence watermark processing failed (%s): %s",
                         type(exc).__name__,
+                        str(diagnostic or exc)[:1000],
                     )
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -913,9 +921,10 @@ class TareasService:
     @staticmethod
     def _raise_database_unavailable(operation: str, exc: SQLAlchemyError) -> NoReturn:
         logger.error(
-            "Task database operation %s failed (%s).",
+            "Task database operation %s failed (%s): %s",
             operation,
             type(exc).__name__,
+            str(getattr(exc, "orig", exc))[:1000],
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1078,7 +1087,8 @@ def _verify_video_duration(path: Path) -> None:
     try:
         probe = subprocess.run(
             [
-                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                resolve_ffmpeg_executable("ffprobe"),
+                "-v", "error", "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1", str(path),
             ],
             check=True,

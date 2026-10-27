@@ -884,7 +884,6 @@ function NovedadesTable({ rows }: { rows: Novedad[] }) {
                   <NoveltyDetail label="Tipo Novedad" value={selectedNovelty.TipoNovedad} />
                   <NoveltyDetail label="Grupo" value={selectedNovelty.Grupo} />
                   <NoveltyDetail label="Subgrupo" value={selectedNovelty.Subgrupo} />
-                  <NoveltyDetail label="Novedad" value={selectedNovelty.Novedad} />
                   <NoveltyDetail label="Descripción" value={selectedNovelty.Descripcion} />
                 </>
               ) : null}

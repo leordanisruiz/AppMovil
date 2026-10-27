@@ -10,14 +10,13 @@ _NOVEDADES_BY_OPERATOR_CODE_QUERY = text(
         fns."Id" AS "IdNovedad",
         fns."FechaIngreso" AS "FechaNovedad",
         fns."Codigo" AS "Codigo",
-        fns."TipoNovedad" AS "TipoNovedad",
+        fns."Novedad" AS "TipoNovedad",
         fns."Grupo" AS "Grupo",
-        fns."Sub Grupo" AS "Subgrupo",
-        fns."Novedad" AS "Novedad",
+        fns."Subgrupo" AS "Subgrupo",
         fns."Detalle" AS "Descripcion",
         fns."Estado" AS "Estado"
     FROM "DW_SUMA"."FactNovedadesSico" AS fns
-    WHERE fns."Codigo" = :codigo_operador
+    WHERE fns."Codigo"::text = CAST(:codigo_operador AS text)
       AND (
           UPPER(fns."Estado") IS NULL
           OR fns."Estado" IN ('PEOCESO', 'PROCESO')

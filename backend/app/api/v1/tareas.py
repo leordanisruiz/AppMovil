@@ -1,6 +1,7 @@
 import logging
 import mimetypes
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import (
@@ -33,6 +34,17 @@ from app.services.tareas_service import tareas_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+EVIDENCE_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+}
 
 
 @router.get(
@@ -365,6 +377,9 @@ def _authenticated_identity(request: Request) -> tuple[str, str]:
 
 
 def _media_type_for(filename: str) -> str:
-    if filename.lower().endswith(".mov"):
-        return "video/quicktime"
-    return mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    extension = Path(filename).suffix.lower()
+    return (
+        EVIDENCE_MEDIA_TYPES.get(extension)
+        or mimetypes.guess_type(filename)[0]
+        or "application/octet-stream"
+    )

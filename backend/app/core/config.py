@@ -25,6 +25,7 @@ class Settings:
         "http://localhost:8081",
         "http://127.0.0.1:8081",
     )
+    cors_origin_regex: str | None = None
 
 
 @lru_cache
@@ -40,6 +41,10 @@ def get_settings() -> Settings:
                 "http://localhost:8081,http://127.0.0.1:8081",
             ).split(",")
             if origin.strip()
+        ),
+        cors_origin_regex=(
+            os.getenv("CORS_ORIGIN_REGEX")
+            or r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
         ),
         database_url=os.getenv("DATABASE_URL") or None,
         jwt_secret_key=os.getenv("JWT_SECRET_KEY") or None,

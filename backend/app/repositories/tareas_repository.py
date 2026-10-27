@@ -62,14 +62,13 @@ _OPERATOR_NOVELTIES = text(
         fns."Id" AS id_novedad,
         fns."FechaIngreso" AS fecha_novedad,
         fns."Codigo" AS codigo,
-        fns."TipoNovedad" AS tipo_novedad,
+        fns."Novedad" AS tipo_novedad,
         fns."Grupo" AS grupo,
-        fns."Sub Grupo" AS subgrupo,
-        fns."Novedad" AS novedad,
+        fns."Subgrupo" AS subgrupo,
         fns."Detalle" AS descripcion,
         fns."Estado" AS estado
     FROM "DW_SUMA"."FactNovedadesSico" AS fns
-    WHERE fns."Codigo" = :codigo_operador
+    WHERE fns."Codigo"::text = CAST(:codigo_operador AS text)
       AND (
           UPPER(fns."Estado") IS NULL
           OR fns."Estado" IN ('PEOCESO', 'PROCESO')
@@ -96,10 +95,9 @@ _NOVELTY_BY_ID = text(
         fns."Id" AS id_novedad,
         fns."FechaIngreso" AS fecha_novedad,
         fns."Codigo" AS codigo,
-        fns."TipoNovedad" AS tipo_novedad,
+        fns."Novedad" AS tipo_novedad,
         fns."Grupo" AS grupo,
-        fns."Sub Grupo" AS subgrupo,
-        fns."Novedad" AS novedad,
+        fns."Subgrupo" AS subgrupo,
         fns."Detalle" AS descripcion,
         fns."Estado" AS estado,
         de."TipoDocumento" AS tipo_documento,

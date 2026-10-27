@@ -50,7 +50,6 @@ class NovedadesService:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="El código no corresponde al usuario autenticado.",
                 )
-
             rows = self._novedades_repository.list_by_operator_code(
                 db,
                 codigo_operador=operator_code,
