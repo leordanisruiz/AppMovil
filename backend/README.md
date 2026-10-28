@@ -266,6 +266,20 @@ el recurso SMB en el host/container y configure, por ejemplo,
 `EVIDENCIAS_CONTAINER_PATH=/mnt/evidencias`; Compose monta esa raíz en la API.
 `EVIDENCIAS_HOST_PATH` es la ruta del host para el bind mount y tiene prioridad;
 si no se define, Compose usa `EVIDENCIAS_PATH` como ruta de origen del montaje.
+
+Si el host ya tiene montada con SSHFS la carpeta `EvidenciasAppMovil` en
+`/mnt/evidencias_appmovil`, use esa misma ruta en ambos lados del contenedor:
+
+```dotenv
+EVIDENCIAS_HOST_PATH=/mnt/evidencias_appmovil
+EVIDENCIAS_CONTAINER_PATH=/mnt/evidencias_appmovil
+```
+
+La ruta dentro del contenedor debe existir y mostrar las carpetas de los
+operadores directamente. Compruébelo con
+`docker compose exec api sh -lc 'echo "$EVIDENCIAS_PATH"; ls -la "$EVIDENCIAS_PATH"'`.
+Si el montaje SSHFS se levantó después del contenedor, recréelo después de
+montar el volumen para que Docker vea el sistema de archivos.
 La ruta del host debe ser accesible por Docker. En Windows, comparta/mapee el
 recurso SMB para Docker Desktop o ejecute la API directamente con una cuenta que
 tenga permiso de escritura en `\\172.20.10.32\web`.

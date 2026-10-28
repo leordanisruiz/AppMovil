@@ -22,7 +22,7 @@ services:
       EXPO_POLL_BATCH_SIZE: ${EXPO_POLL_BATCH_SIZE:-100}
     volumes:
       - ./logs:/backend/logs
-      - ${EVIDENCIAS_HOST_PATH:-${EVIDENCIAS_PATH:-./evidencias}}:/mnt/evidencias
+      - ${EVIDENCIAS_HOST_PATH:-${EVIDENCIAS_PATH:-./evidencias}}:${EVIDENCIAS_CONTAINER_PATH:-/mnt/evidencias}
 
   push-worker:
     build: .
@@ -39,5 +39,4 @@ services:
       EXPO_POLL_BATCH_SIZE: ${EXPO_POLL_BATCH_SIZE:-100}
     volumes:
       - ./logs:/backend/logs
-      - ${EVIDENCIAS_HOST_PATH:-${EVIDENCIAS_PATH:-./evidencias}}:/mnt/evidencias
-
+      - ${EVIDENCIAS_HOST_PATH:-${EVIDENCIAS_PATH:-./evidencias}}:${EVIDENCIAS_CONTAINER_PATH:-/mnt/evidencias}
