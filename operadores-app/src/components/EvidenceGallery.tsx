@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Modal,
   PanResponder,
   Platform,
@@ -45,6 +45,26 @@ export function EvidenceGallery({
 }: EvidenceGalleryProps) {
   const { headers, headersReady } = useEvidenceAuthHeaders();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [previewLimit, setPreviewLimit] = useState(4);
+
+  useEffect(() => {
+    if (!headersReady || !headers) return;
+    const initialThumbnails = evidences
+      .filter((evidence) => evidence.tipo === 'image')
+      .slice(0, 2)
+      .map((evidence) => tareasService.evidenceThumbnailUrl(taskId, evidence.nombre));
+    const prefetchImages = Image.prefetch;
+    if (initialThumbnails.length && typeof prefetchImages === 'function') {
+      void Promise.resolve(
+        prefetchImages.call(Image, initialThumbnails, {
+          cachePolicy: 'memory-disk',
+          headers,
+        }),
+      ).catch((error: unknown) => {
+        console.warn('No fue posible precargar miniaturas; se cargarán al mostrarlas.', error);
+      });
+    }
+  }, [evidences, headers, headersReady, taskId]);
 
   if (!evidences.length) {
     return (
@@ -63,6 +83,11 @@ export function EvidenceGallery({
             evidence={evidence}
             headers={headers}
             headersReady={headersReady}
+            shouldLoadPreview={
+              evidence.tipo === 'image' &&
+              evidences.slice(0, index + 1).filter((item) => item.tipo === 'image').length <= previewLimit
+            }
+            onPreviewSettled={() => setPreviewLimit((current) => current + 1)}
             onPress={() => setActiveIndex(index)}
             taskId={taskId}
           />
@@ -86,39 +111,31 @@ function EvidenceCard({
   evidence,
   headers,
   headersReady,
+  shouldLoadPreview,
+  onPreviewSettled,
   onPress,
 }: {
   taskId: number;
   evidence: TaskEvidence;
   headers: Record<string, string> | undefined;
   headersReady: boolean;
+  shouldLoadPreview: boolean;
+  onPreviewSettled: () => void;
   onPress: () => void;
 }) {
   const [hasPreviewError, setHasPreviewError] = useState(false);
   const [isPreviewLoaded, setPreviewLoaded] = useState(false);
-  const [useOriginalPreview, setUseOriginalPreview] = useState(false);
   const { hasError: sourceError, isLoading, uri: previewUri } = useEvidenceSource(
     taskId,
     evidence,
     headers,
     headersReady,
-    !useOriginalPreview,
+    true,
+    0,
+    shouldLoadPreview,
   );
   const isImage = evidence.tipo === 'image';
   const showImage = isImage && !hasPreviewError && previewUri !== null;
-
-  useEffect(() => {
-    if (!showImage || isPreviewLoaded || hasPreviewError) return;
-    const timeout = setTimeout(() => {
-      if (!useOriginalPreview) {
-        setPreviewLoaded(false);
-        setUseOriginalPreview(true);
-      } else {
-        setHasPreviewError(true);
-      }
-    }, 15_000);
-    return () => clearTimeout(timeout);
-  }, [hasPreviewError, isPreviewLoaded, showImage, useOriginalPreview]);
 
   return (
     <Pressable
@@ -130,20 +147,20 @@ function EvidenceCard({
       <View style={styles.cardPreview}>
         {showImage ? (
           <Image
+            cachePolicy="memory-disk"
+            contentFit="cover"
             onError={() => {
-              if (!useOriginalPreview) {
-                setPreviewLoaded(false);
-                setUseOriginalPreview(true);
-              } else {
-                setHasPreviewError(true);
-              }
+              setHasPreviewError(true);
+              onPreviewSettled();
             }}
-            onLoad={() => setPreviewLoaded(true)}
-            resizeMode="cover"
-            source={{ uri: previewUri, headers }}
+            onLoad={() => {
+              setPreviewLoaded(true);
+              onPreviewSettled();
+            }}
+            source={{ uri: previewUri, headers, cacheKey: evidence.nombre }}
             style={styles.cardImage}
           />
-        ) : isImage && isLoading ? (
+        ) : isImage && (isLoading || !shouldLoadPreview) ? (
           <View style={styles.cardLoadingState}>
             <ActivityIndicator color={colors.white} />
             <Text style={styles.cardLoadingText}>Cargando...</Text>
@@ -206,13 +223,16 @@ function EvidenceViewer({
         onMoveShouldSetPanResponder: (_event, gesture) =>
           index !== null &&
           gesture.numberActiveTouches === 1 &&
-          ((gesture.x0 <= width * 0.18 && gesture.dx > 42 && Math.abs(gesture.dy) < 70) ||
+          (Math.abs(gesture.dx) > 42 ||
             (gesture.dy > 72 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2)),
         onPanResponderRelease: (_event, gesture) => {
-          if (gesture.dx >= 84 || gesture.dy >= 120) onClose();
+          if (Math.abs(gesture.dx) > 84 && index !== null) {
+            const next = gesture.dx < 0 ? index + 1 : index - 1;
+            if (next >= 0 && next < evidences.length) onChangeIndex(next);
+          } else if (gesture.dy >= 120) onClose();
         },
       }),
-    [index, onClose, width],
+    [evidences.length, index, onChangeIndex, onClose],
   );
   const [busyAction, setBusyAction] = useState<EvidenceAction | null>(null);
   const [sourceRetry, setSourceRetry] = useState(0);
@@ -481,17 +501,20 @@ function ZoomableImage({
   ) => (
     <Image
       key={imageRetry}
+      allowDownscaling
+      cachePolicy="memory-disk"
+      contentFit="contain"
       onError={(event) => {
         console.warn(
-          'No se pudo cargar la imagen de evidencia:',
-          event.nativeEvent.error,
+          'No se pudo decodificar la imagen de evidencia:',
+          uri,
+          event.error,
         );
         setLoadState('error');
       }}
       onLoad={() => setLoadState('loaded')}
       onLoadStart={() => setLoadState('loading')}
-      resizeMode="contain"
-      source={{ uri, headers }}
+      source={{ uri, headers, cacheKey: `${uri}#retry-${imageRetry}` }}
       style={{ height: imageHeight, width: imageWidth }}
     />
   );
@@ -634,6 +657,7 @@ function useEvidenceSource(
   headersReady: boolean,
   thumbnail = false,
   retryKey = 0,
+  enabled = true,
 ): {
   uri: string | null;
   headers?: Record<string, string>;
@@ -648,13 +672,25 @@ function useEvidenceSource(
     let isMounted = true;
     let objectUrl: string | null = null;
 
-    if (!evidence) {
+    if (!evidence || !enabled) {
       return () => {
         isMounted = false;
       };
     }
 
     if (!headersReady) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    if (thumbnail && evidence.tipo !== 'image') {
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    if (evidence.tipo === 'image') {
       return () => {
         isMounted = false;
       };
@@ -714,19 +750,23 @@ function useEvidenceSource(
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [evidence, headers, headersReady, retryKey, taskId, thumbnail]);
+  }, [enabled, evidence, headers, headersReady, retryKey, taskId, thumbnail]);
 
   return {
-    headers: Platform.OS !== 'web' ? headers : undefined,
-    isLoading: !headersReady || (Platform.OS === 'web' && isLoading),
-    hasError,
-    uri: Platform.OS === 'web'
-      ? uri
-      : headersReady && evidence
-        ? thumbnail && evidence.tipo === 'image'
-          ? tareasService.evidenceThumbnailUrl(taskId, evidence.nombre)
-            : getEvidenceSourceUrl(taskId, evidence, false)
-        : null,
+    headers,
+    isLoading: !headersReady || (
+      Platform.OS === 'web' && !thumbnail && evidence?.tipo === 'video' && isLoading
+    ),
+    hasError: !thumbnail && evidence?.tipo === 'video' ? hasError : false,
+    uri: !enabled || !headersReady || !evidence
+      ? null
+      : thumbnail && evidence.tipo !== 'image'
+        ? null
+        : evidence.tipo === 'image'
+          ? getEvidenceSourceUrl(taskId, evidence, thumbnail)
+          : Platform.OS !== 'web'
+            ? getEvidenceSourceUrl(taskId, evidence, false)
+            : uri,
   };
 }
 
@@ -738,7 +778,7 @@ function getEvidenceSourceUrl(
   if (thumbnail && evidence.tipo === 'image') {
     return tareasService.evidenceThumbnailUrl(taskId, evidence.nombre);
   }
-  if (Platform.OS === 'web' && evidence.tipo === 'image') {
+  if (evidence.tipo === 'image') {
     return tareasService.evidenceOriginalPreviewUrl(taskId, evidence.nombre);
   }
   return tareasService.evidenceUrl(taskId, evidence.nombre);

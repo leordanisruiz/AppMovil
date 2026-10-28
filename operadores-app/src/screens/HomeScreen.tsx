@@ -21,7 +21,6 @@ import { SectionHeading } from '../components/SectionHeading';
 import { TasksSection } from '../components/TasksSection';
 import { TaskAssignmentSection } from '../components/TaskAssignmentSection';
 import { CreatedTasksSection } from '../components/CreatedTasksSection';
-import { getApiErrorMessage } from '../services/authService';
 import { useNovedades } from '../hooks/useNovedades';
 import { useTareas } from '../hooks/useTareas';
 import { useTareasResumen } from '../hooks/useTareasResumen';
@@ -111,7 +110,6 @@ export function HomeScreen() {
   ).length ?? 0;
   const [isWelcomeNoticeDismissed, setIsWelcomeNoticeDismissed] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
-  const [pushSetupError, setPushSetupError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<PortalSection>('inicio');
   const backSwipe = useMemo(
@@ -179,11 +177,7 @@ export function HomeScreen() {
   useEffect(() => {
     if (!canRegisterPush) return undefined;
 
-    let isMounted = true;
     void registerDeviceForPushNotifications()
-      .then(() => {
-        if (isMounted) setPushSetupError(null);
-      })
       .catch(async (error: unknown) => {
         if (isAxiosError(error) && error.response?.status === 401) {
           console.warn(
@@ -202,19 +196,9 @@ export function HomeScreen() {
         }
 
         console.error('No se pudo registrar el dispositivo para push:', error);
-        if (isMounted) {
-          setPushSetupError(
-            getApiErrorMessage(
-              error,
-              'No fue posible activar las notificaciones en este dispositivo.',
-            ),
-          );
-        }
+        // Push registration is optional; keep technical failures out of task UI.
       });
-
-    return () => {
-      isMounted = false;
-    };
+    return undefined;
   }, [canRegisterPush, expireSession]);
 
 
@@ -309,11 +293,6 @@ export function HomeScreen() {
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          {pushSetupError ? (
-            <Text accessibilityRole="alert" style={styles.pushSetupError}>
-              {pushSetupError}
-            </Text>
-          ) : null}
           <View style={styles.topBar}>
             <Pressable
               accessibilityLabel="Abrir menú de navegación"
@@ -1583,15 +1562,6 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontSize: typography.caption,
     textAlign: 'center',
-  },
-  pushSetupError: {
-    backgroundColor: '#FFF0F0',
-    borderColor: colors.border,
-    borderRadius: radius.medium,
-    borderWidth: 1,
-    color: colors.danger,
-    fontSize: typography.small,
-    padding: spacing.medium,
   },
   footer: {
     color: colors.textMuted,

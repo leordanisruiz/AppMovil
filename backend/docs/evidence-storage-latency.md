@@ -146,3 +146,50 @@ caché de disco no se controló. Persistir las miniaturas en disco local evitar�
 leer sus bytes desde SSHFS en los cache hits; generar miniaturas al subir puede
 evitar también la lectura remota de contenido en el primer llenado. Seguirían
 las consultas de metadatos necesarias para autorizar y validar la ruta.
+
+## Cambios implementados
+
+La arquitectura descrita arriba ya está conectada al backend y la app:
+
+- `app/services/evidence_cache.py` mantiene miniaturas en
+  `/var/cache/appmovil/evidence-thumbnails` y media en
+  `/var/cache/appmovil/evidence-media`. Compose monta el volumen persistente
+  `evidence-cache:/var/cache/appmovil` en el servicio `api`.
+- Las claves combinan ruta canónica, tamaño y `mtime_ns`; el llenado es atómico
+  y los archivos menos usados se eliminan cuando la caché llega al límite.
+- El límite de miniaturas es 512 MiB; originales y videos comparten 2 GiB. Solo
+  se cachean completos videos de hasta 16 MiB. Se puede configurar con
+  `EVIDENCE_THUMBNAIL_CACHE_MAX_BYTES`, `EVIDENCE_MEDIA_CACHE_MAX_BYTES` y
+  `EVIDENCE_VIDEO_CACHE_MAX_FILE_BYTES`.
+- `upload_evidence()` prepara el temporal de subida en disco local y crea la
+  miniatura desde la imagen marcada que ya está decodificada. Evidencias
+  antiguas se miniaturizan una vez bajo demanda y luego la miniatura persiste.
+- Las rutas autenticadas de miniatura, vista y descarga usan caché. Videos
+  pequeños se copian completos antes de servir; los mayores permanecen en SSHFS.
+  `FileResponse` conserva Range para ambos caminos.
+- Cada respuesta emite `Evidence response metrics` con hit/miss/bypass, fuente,
+  bytes, lectura SSHFS/local, escritura, preparación y duración total.
+  `local_stream_ms` y `sshfs_stream_ms` incluyen la transferencia al cliente; no
+  son tiempos puros de disco. `file_bytes` es el tamaño del archivo, también en
+  una respuesta parcial Range.
+- `EvidenceGallery.tsx` usa `expo-image` con caché `memory-disk`, autorización,
+  precarga inicial, skeleton y carga progresiva. La cuadrícula solo solicita
+  miniaturas; el original se solicita al abrir el visor. Se mantienen zoom,
+  doble toque, swipe, descarga y compartir.
+
+Para desplegar y crear o adjuntar el volumen persistente:
+
+```sh
+cd backend
+docker compose up -d --build --force-recreate api
+docker compose logs --tail=100 api
+```
+
+`docker compose down` conserva el volumen. Evitar `docker compose down -v` si se
+quiere preservar la caché. El volumen solo se monta en `api`; `push-worker` no
+sirve evidencias.
+
+En las muestras aportadas, la copia local caliente superó a SSHFS entre 113× y
+151×. La miniatura nueva evita la lectura SSHFS en el primer listado; para
+archivos antiguos la primera generación aún lee el original una vez. La
+autorización y resolución siguen consultando metadatos del origen.

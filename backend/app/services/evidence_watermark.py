@@ -7,11 +7,18 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
-def watermark_image(source: Path, destination: Path, captured_at: datetime) -> None:
+def watermark_image(
+    source: Path,
+    destination: Path,
+    captured_at: datetime,
+    *,
+    on_processed: Callable[[Image.Image], None] | None = None,
+) -> None:
     try:
         from pillow_heif import register_heif_opener
 
@@ -40,6 +47,8 @@ def watermark_image(source: Path, destination: Path, captured_at: datetime) -> N
     )
     draw.text((x, y), label, font=font, fill=(255, 255, 255), stroke_width=0)
     image.save(destination, format="JPEG", quality=90, optimize=True)
+    if on_processed:
+        on_processed(image)
 
 
 def watermark_video(source: Path, destination: Path, captured_at: datetime) -> None:

@@ -1,4 +1,5 @@
 import os
+import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from urllib.parse import urlsplit
@@ -27,6 +28,10 @@ class Settings:
         "http://127.0.0.1:8081",
     )
     cors_origin_regex: str | None = None
+    evidence_cache_path: str = "/var/cache/appmovil"
+    evidence_thumbnail_cache_max_bytes: int = 536870912
+    evidence_media_cache_max_bytes: int = 2147483648
+    evidence_video_cache_max_file_bytes: int = 16777216
 
 
 @lru_cache
@@ -66,6 +71,21 @@ def get_settings() -> Settings:
             os.getenv("EXPO_POLL_INTERVAL_SECONDS", "5")
         ),
         expo_poll_batch_size=int(os.getenv("EXPO_POLL_BATCH_SIZE", "100")),
+        evidence_cache_path=os.getenv(
+            "EVIDENCE_CACHE_PATH",
+            os.path.join(tempfile.gettempdir(), "appmovil-cache")
+            if os.name == "nt"
+            else "/var/cache/appmovil",
+        ),
+        evidence_thumbnail_cache_max_bytes=int(
+            os.getenv("EVIDENCE_THUMBNAIL_CACHE_MAX_BYTES", str(512 * 1024 * 1024))
+        ),
+        evidence_media_cache_max_bytes=int(
+            os.getenv("EVIDENCE_MEDIA_CACHE_MAX_BYTES", str(2 * 1024 * 1024 * 1024))
+        ),
+        evidence_video_cache_max_file_bytes=int(
+            os.getenv("EVIDENCE_VIDEO_CACHE_MAX_FILE_BYTES", str(16 * 1024 * 1024))
+        ),
     )
 
 

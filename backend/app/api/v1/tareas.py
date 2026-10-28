@@ -1,10 +1,8 @@
 import logging
 import mimetypes
 from datetime import datetime
-from hashlib import sha256
-import os
 from pathlib import Path
-import tempfile
+from time import perf_counter
 from typing import Any
 
 from fastapi import (
@@ -19,7 +17,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
-from PIL import Image, ImageOps
+from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -34,6 +32,7 @@ from app.schemas.tarea import (
     TipoTareaResponse,
 )
 from app.services.tareas_service import tareas_service
+from app.services.evidence_cache import EvidenceCacheResult, get_evidence_cache
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +292,7 @@ def ver_evidencia(
     request: Request,
     db: Session = Depends(get_db),
 ) -> FileResponse:
+    started = perf_counter()
     tipo_documento, identificacion = _authenticated_identity(request)
     path, _ = tareas_service.get_evidence_path(
         db,
@@ -301,8 +301,10 @@ def ver_evidencia(
         tipo_documento=tipo_documento,
         identificacion=identificacion,
     )
-    return FileResponse(
-        path=path,
+    cached = _cached_evidence(path)
+    return _evidence_response(
+        cached,
+        started=started,
         media_type=_media_type_for(path.name),
         headers={"Content-Disposition": "inline"},
     )
@@ -319,6 +321,7 @@ def ver_miniatura_evidencia(
     db: Session = Depends(get_db),
     original: bool = Query(default=False),
 ) -> FileResponse:
+    started = perf_counter()
     tipo_documento, identificacion = _authenticated_identity(request)
     path, _ = tareas_service.get_evidence_path(
         db,
@@ -328,8 +331,10 @@ def ver_miniatura_evidencia(
         identificacion=identificacion,
     )
     if original:
-        return FileResponse(
-            path=path,
+        cached = _cached_evidence(path)
+        return _evidence_response(
+            cached,
+            started=started,
             media_type=_media_type_for(path.name),
             headers={
                 "Cache-Control": "private, max-age=300",
@@ -337,29 +342,10 @@ def ver_miniatura_evidencia(
             },
         )
 
-    stat = path.stat()
-    cache_key = sha256(
-        f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
-    ).hexdigest()
-    cache_dir = Path(tempfile.gettempdir()) / "appmovil-evidence-thumbnails"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    thumbnail_path = cache_dir / f"{cache_key}.jpg"
-    if not thumbnail_path.is_file():
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f"{cache_key}.", suffix=".tmp", dir=cache_dir
-        )
-        os.close(descriptor)
-        temporary_path = Path(temporary_name)
-        try:
-            with Image.open(path) as opened:
-                image = ImageOps.exif_transpose(opened).convert("RGB")
-            image.thumbnail((480, 480), Image.Resampling.LANCZOS)
-            image.save(temporary_path, format="JPEG", quality=72, optimize=True)
-            os.replace(temporary_path, thumbnail_path)
-        finally:
-            temporary_path.unlink(missing_ok=True)
-    return FileResponse(
-        path=thumbnail_path,
+    cached = get_evidence_cache().get_thumbnail(path)
+    return _evidence_response(
+        cached,
+        started=started,
         media_type="image/jpeg",
         headers={"Cache-Control": "private, max-age=86400"},
     )
@@ -379,6 +365,7 @@ def descargar_evidencia(
     request: Request,
     db: Session = Depends(get_db),
 ) -> FileResponse:
+    started = perf_counter()
     tipo_documento, identificacion = _authenticated_identity(request)
     path, download_name = tareas_service.get_evidence_path(
         db,
@@ -394,10 +381,84 @@ def descargar_evidencia(
         tipo_documento,
         identificacion,
     )
-    return FileResponse(
-        path=path,
+    cached = _cached_evidence(path)
+    return _evidence_response(
+        cached,
+        started=started,
         media_type=_media_type_for(path.name),
         filename=download_name,
+    )
+
+
+def _cached_evidence(path: Path) -> EvidenceCacheResult:
+    cache = get_evidence_cache()
+    try:
+        if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}:
+            return cache.get_original_image(path)
+        if path.suffix.lower() in {".mp4", ".mov"}:
+            return cache.get_video_if_small(path)
+    except OSError:
+        logger.warning(
+            "Evidence local cache failed; serving from source: file=%s.",
+            path.name,
+            exc_info=True,
+        )
+        return EvidenceCacheResult(
+            path=path,
+            cache_status="error-bypass",
+            response_source="sshfs",
+            kind="original",
+            size_bytes=path.stat().st_size,
+        )
+    return EvidenceCacheResult(
+        path=path,
+        cache_status="bypass",
+        response_source="sshfs",
+        kind="original",
+        size_bytes=path.stat().st_size,
+    )
+
+
+def _evidence_response(
+    result: EvidenceCacheResult,
+    *,
+    started: float,
+    media_type: str,
+    headers: dict[str, str] | None = None,
+    filename: str | None = None,
+) -> FileResponse:
+    prepared_ms = (perf_counter() - started) * 1000
+    response_headers = dict(headers or {})
+    response_headers.setdefault("Cache-Control", "private, max-age=300")
+
+    def log_completed_response() -> None:
+        total_ms = (perf_counter() - started) * 1000
+        stream_ms = max(0.0, total_ms - prepared_ms)
+        local_stream_ms = stream_ms if result.response_source == "local-cache" else 0.0
+        sshfs_stream_ms = stream_ms if result.response_source == "sshfs" else 0.0
+        logger.info(
+            "Evidence response metrics: kind=%s cache=%s source=%s file_bytes=%s "
+            "sshfs_read_ms=%.2f sshfs_stream_ms=%.2f local_read_ms=%.2f local_stream_ms=%.2f "
+            "cache_write_ms=%.2f prepare_ms=%.2f total_response_ms=%.2f",
+            result.kind,
+            result.cache_status,
+            result.response_source,
+            result.size_bytes,
+            result.source_read_ms,
+            sshfs_stream_ms,
+            result.local_read_ms,
+            local_stream_ms,
+            result.cache_write_ms,
+            prepared_ms,
+            total_ms,
+        )
+
+    return FileResponse(
+        path=result.path,
+        media_type=media_type,
+        filename=filename,
+        headers=response_headers,
+        background=BackgroundTask(log_completed_response),
     )
 
 

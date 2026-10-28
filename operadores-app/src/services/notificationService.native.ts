@@ -31,25 +31,28 @@ const ANDROID_CHANNELS: AndroidChannel[] = [
   },
 ];
 
-Notifications.setNotificationHandler({
-  handleNotification: async (notification) => {
-    const data = notification.request.content.data;
-    const isForegroundFallback =
-      data?.source === 'foreground-poll' || data?.tipo === 'tarea';
-    const shouldPresent =
-      AppState.currentState !== 'active' || isForegroundFallback;
+if (typeof Notifications.setNotificationHandler === 'function') {
+  Notifications.setNotificationHandler({
+    handleNotification: async (notification) => {
+      const data = notification.request.content.data;
+      const isForegroundFallback =
+        data?.source === 'foreground-poll' || data?.tipo === 'tarea';
+      const shouldPresent =
+        AppState.currentState !== 'active' || isForegroundFallback;
 
-    return {
-      shouldPlaySound: shouldPresent,
-      shouldSetBadge: true,
-      shouldShowBanner: shouldPresent,
-      shouldShowList: shouldPresent,
-    };
-  },
-});
+      return {
+        shouldPlaySound: shouldPresent,
+        shouldSetBadge: true,
+        shouldShowBanner: shouldPresent,
+        shouldShowList: shouldPresent,
+      };
+    },
+  });
+}
 
 export async function requestNotificationPermission(): Promise<boolean> {
   if (Platform.OS === 'android') {
+    if (typeof Notifications.setNotificationChannelAsync !== 'function') return false;
     await Promise.all(
       ANDROID_CHANNELS.map((channel) =>
         Notifications.setNotificationChannelAsync(channel.id, {
@@ -62,11 +65,13 @@ export async function requestNotificationPermission(): Promise<boolean> {
     );
   }
 
+  if (typeof Notifications.getPermissionsAsync !== 'function') return false;
   const currentPermissions = await Notifications.getPermissionsAsync();
   if (currentPermissions.granted) {
     return true;
   }
 
+  if (typeof Notifications.requestPermissionsAsync !== 'function') return false;
   const requestedPermissions = await Notifications.requestPermissionsAsync();
   return requestedPermissions.granted;
 }
@@ -74,7 +79,9 @@ export async function requestNotificationPermission(): Promise<boolean> {
 export async function syncAppBadge(pendingCount: number): Promise<void> {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
 
-  await Notifications.setBadgeCountAsync(Math.max(0, pendingCount));
+  if (typeof Notifications.setBadgeCountAsync === 'function') {
+    await Notifications.setBadgeCountAsync(Math.max(0, pendingCount));
+  }
 }
 
 export async function getExpoPushToken(): Promise<string | null> {
@@ -89,6 +96,8 @@ export async function getExpoPushToken(): Promise<string | null> {
     );
   }
 
+  if (typeof Notifications.getExpoPushTokenAsync !== 'function') return null;
+
   const pushToken = await Notifications.getExpoPushTokenAsync({ projectId });
   return pushToken.data;
 }
@@ -97,6 +106,7 @@ export async function showNewNoveltyNotification(
   newNoveltyCount: number,
 ): Promise<void> {
   if (newNoveltyCount < 1) return;
+  if (typeof Notifications.scheduleNotificationAsync !== 'function') return;
 
   const noun = newNoveltyCount === 1 ? 'novedad nueva' : 'novedades nuevas';
   await Notifications.scheduleNotificationAsync({
@@ -114,17 +124,28 @@ export function subscribeToNoveltyNavigation(
   onNotificationReceived: () => void,
   onOpenTasks: () => void,
 ): () => void {
-  const lastResponse = Notifications.getLastNotificationResponse();
+  const lastResponse = typeof Notifications.getLastNotificationResponse === 'function'
+    ? Notifications.getLastNotificationResponse()
+    : null;
   const lastData = lastResponse?.notification.request.content.data;
   if (isNoveltyNotification(lastData)) {
     onNotificationReceived();
     onOpenNovedades();
-    Notifications.clearLastNotificationResponse();
+    if (typeof Notifications.clearLastNotificationResponse === 'function') {
+      Notifications.clearLastNotificationResponse();
+    }
   } else if (isTaskNotification(lastData)) {
     onNotificationReceived();
     onOpenTasks();
-    Notifications.clearLastNotificationResponse();
+    if (typeof Notifications.clearLastNotificationResponse === 'function') {
+      Notifications.clearLastNotificationResponse();
+    }
   }
+
+  if (
+    typeof Notifications.addNotificationReceivedListener !== 'function' ||
+    typeof Notifications.addNotificationResponseReceivedListener !== 'function'
+  ) return () => {};
 
   const receivedListener = Notifications.addNotificationReceivedListener(() => {
     onNotificationReceived();
@@ -134,11 +155,15 @@ export function subscribeToNoveltyNavigation(
       if (isNoveltyNotification(response.notification.request.content.data)) {
         onNotificationReceived();
         onOpenNovedades();
-        Notifications.clearLastNotificationResponse();
+        if (typeof Notifications.clearLastNotificationResponse === 'function') {
+          Notifications.clearLastNotificationResponse();
+        }
       } else if (isTaskNotification(response.notification.request.content.data)) {
         onNotificationReceived();
         onOpenTasks();
-        Notifications.clearLastNotificationResponse();
+        if (typeof Notifications.clearLastNotificationResponse === 'function') {
+          Notifications.clearLastNotificationResponse();
+        }
       }
     });
 

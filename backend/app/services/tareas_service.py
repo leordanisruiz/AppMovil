@@ -33,6 +33,7 @@ from app.services.evidence_watermark import (
     watermark_image,
     watermark_video,
 )
+from app.services.evidence_cache import get_evidence_cache
 
 logger = logging.getLogger(__name__)
 
@@ -534,7 +535,7 @@ class TareasService:
                 original_name = Path(upload.filename or f"evidencia{suffix}").name
                 safe_name = re.sub(r"[^\w.-]", "_", original_name)[:80]
                 filename = f"{uuid4().hex[:8]}_{safe_name or f'evidencia{suffix}'}"
-                temporary_path = _new_temp_path(evidence_directory)
+                temporary_path = _new_upload_staging_path()
                 staged_paths.append(temporary_path)
                 file_size = _write_upload(upload, temporary_path)
                 _verify_file_signature(temporary_path, content_type)
@@ -559,7 +560,25 @@ class TareasService:
                 final_paths.append(final_path)
                 try:
                     if media_type == "image":
-                        watermark_image(temporary_path, final_path, watermark_time)
+                        def cache_thumbnail(image: Any) -> None:
+                            try:
+                                get_evidence_cache().store_thumbnail_from_image(
+                                    final_path, image
+                                )
+                            except (OSError, ValueError):
+                                logger.warning(
+                                    "Could not pre-generate evidence thumbnail: task=%s file=%s.",
+                                    tarea_id,
+                                    final_filename,
+                                    exc_info=True,
+                                )
+
+                        watermark_image(
+                            temporary_path,
+                            final_path,
+                            watermark_time,
+                            on_processed=cache_thumbnail,
+                        )
                     else:
                         watermark_video(temporary_path, final_path, watermark_time)
                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -1101,6 +1120,13 @@ def _new_temp_path(directory: Path) -> Path:
     path = Path(name)
     path.unlink()
     return path
+
+
+def _new_upload_staging_path() -> Path:
+    """Stage uploaded bytes on the container disk, never on the SSHFS mount."""
+    staging_directory = Path(tempfile.gettempdir()) / "appmovil-evidence-staging"
+    staging_directory.mkdir(parents=True, exist_ok=True)
+    return _new_temp_path(staging_directory)
 
 
 def _write_upload(upload: UploadFile, destination: Path) -> int:
