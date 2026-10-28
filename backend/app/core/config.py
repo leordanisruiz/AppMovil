@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -30,18 +31,19 @@ class Settings:
 
 @lru_cache
 def get_settings() -> Settings:
+    cors_origins = tuple(
+        _normalize_origin(origin)
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:8081,http://127.0.0.1:8081",
+        ).split(",")
+        if origin.strip()
+    )
     return Settings(
         app_name=os.getenv("APP_NAME", "AppMovil API"),
         environment=os.getenv("ENVIRONMENT", "development"),
         api_v1_prefix=os.getenv("API_V1_PREFIX", "/api/v1"),
-        cors_origins=tuple(
-            origin.strip().rstrip("/")
-            for origin in os.getenv(
-                "CORS_ORIGINS",
-                "http://localhost:8081,http://127.0.0.1:8081",
-            ).split(",")
-            if origin.strip()
-        ),
+        cors_origins=cors_origins,
         cors_origin_regex=(
             os.getenv("CORS_ORIGIN_REGEX")
             or r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
@@ -65,3 +67,11 @@ def get_settings() -> Settings:
         ),
         expo_poll_batch_size=int(os.getenv("EXPO_POLL_BATCH_SIZE", "100")),
     )
+
+
+def _normalize_origin(origin: str) -> str:
+    """CORS compares origins, which never include an application subpath."""
+    parsed = urlsplit(origin.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return origin.strip().rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}"

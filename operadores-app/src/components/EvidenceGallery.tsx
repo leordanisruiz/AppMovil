@@ -28,7 +28,6 @@ import type { TaskEvidence, TaskEvidenceType } from '../types/tarea';
 type EvidenceGalleryProps = {
   taskId: number;
   evidences: TaskEvidence[];
-  canManage: boolean;
   emptyMessage: string;
 };
 
@@ -42,7 +41,6 @@ const ZOOM_SCALE = 2.5;
 export function EvidenceGallery({
   taskId,
   evidences,
-  canManage,
   emptyMessage,
 }: EvidenceGalleryProps) {
   const headers = useEvidenceAuthHeaders();
@@ -63,13 +61,13 @@ export function EvidenceGallery({
           <EvidenceCard
             key={evidence.nombre}
             evidence={evidence}
+            headers={headers}
             onPress={() => setActiveIndex(index)}
             taskId={taskId}
           />
         ))}
       </View>
       <EvidenceViewer
-        canManage={canManage}
         evidences={evidences}
         headers={headers}
         index={activeIndex}
@@ -84,14 +82,17 @@ export function EvidenceGallery({
 function EvidenceCard({
   taskId,
   evidence,
+  headers,
   onPress,
 }: {
   taskId: number;
   evidence: TaskEvidence;
+  headers: Record<string, string> | undefined;
   onPress: () => void;
 }) {
   const [hasPreviewError, setHasPreviewError] = useState(false);
-  const { isLoading, uri: previewUri } = useEvidenceSource(taskId, evidence);
+  const [isPreviewLoaded, setPreviewLoaded] = useState(false);
+  const { isLoading, uri: previewUri } = useEvidenceSource(taskId, evidence, headers);
   const isImage = evidence.tipo === 'image';
   const showImage = isImage && !hasPreviewError && previewUri !== null;
 
@@ -106,8 +107,9 @@ function EvidenceCard({
         {showImage ? (
           <Image
             onError={() => setHasPreviewError(true)}
+            onLoad={() => setPreviewLoaded(true)}
             resizeMode="cover"
-            source={{ uri: previewUri }}
+            source={{ uri: previewUri, headers }}
             style={styles.cardImage}
           />
         ) : isImage && isLoading ? (
@@ -123,6 +125,11 @@ function EvidenceCard({
             </Text>
           </View>
         )}
+        {showImage && !isPreviewLoaded ? (
+          <View style={styles.cardLoadingOverlay} pointerEvents="none">
+            <ActivityIndicator color={colors.white} />
+          </View>
+        ) : null}
         {!isImage ? (
           <View style={styles.playBadge}>
             <Text style={styles.playBadgeText}>▶</Text>
@@ -144,7 +151,6 @@ function EvidenceViewer({
   evidences,
   headers,
   index,
-  canManage,
   onChangeIndex,
   onClose,
 }: {
@@ -152,7 +158,6 @@ function EvidenceViewer({
   evidences: TaskEvidence[];
   headers: Record<string, string> | undefined;
   index: number | null;
-  canManage: boolean;
   onChangeIndex: (index: number) => void;
   onClose: () => void;
 }) {
@@ -176,6 +181,7 @@ function EvidenceViewer({
   const { headers: sourceHeaders, isLoading, uri: sourceUri } = useEvidenceSource(
     taskId,
     index === null ? null : evidences[index],
+    headers,
   );
 
   if (index === null) return null;
@@ -183,7 +189,7 @@ function EvidenceViewer({
   const evidence = evidences[index];
   const isImage = evidence.tipo === 'image';
   const displayName = getEvidenceDisplayName(evidence.nombre);
-  const stageHeight = Math.round(height * 0.58);
+  const stageHeight = Math.round(height * 0.42);
 
   const runAction = async (action: EvidenceAction) => {
     setBusyAction(action);
@@ -239,6 +245,7 @@ function EvidenceViewer({
         <View style={[styles.viewerStage, { height: stageHeight }]}>
           {isImage ? (
             <ResolvedZoomableImage
+              headers={sourceHeaders ?? headers}
               height={stageHeight}
               isLoading={isLoading}
               uri={sourceUri}
@@ -295,8 +302,7 @@ function EvidenceViewer({
             </Text>
           ) : null}
 
-          {canManage ? (
-            <View style={styles.viewerActions}>
+          <View style={styles.viewerActions}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ busy: busyAction === 'download' }}
@@ -323,8 +329,7 @@ function EvidenceViewer({
                   <Text style={styles.viewerActionText}>Compartir</Text>
                 )}
               </Pressable>
-            </View>
-          ) : null}
+          </View>
         </View>
       </View>
     </Modal>
@@ -333,11 +338,13 @@ function EvidenceViewer({
 
 function ResolvedZoomableImage({
   uri,
+  headers,
   isLoading,
   width,
   height,
 }: {
   uri: string | null;
+  headers?: Record<string, string>;
   isLoading: boolean;
   width: number;
   height: number;
@@ -351,15 +358,17 @@ function ResolvedZoomableImage({
     );
   }
 
-  return <ZoomableImage height={height} uri={uri} width={width} />;
+  return <ZoomableImage headers={headers} height={height} uri={uri} width={width} />;
 }
 
 function ZoomableImage({
   uri,
+  headers,
   width,
   height,
 }: {
   uri: string;
+  headers?: Record<string, string>;
   width: number;
   height: number;
 }) {
@@ -377,7 +386,7 @@ function ZoomableImage({
       >
         <Image
           resizeMode="contain"
-          source={{ uri }}
+          source={{ uri, headers }}
           style={{ height, width }}
         />
       </ScrollView>
@@ -400,7 +409,7 @@ function ZoomableImage({
         <Pressable accessibilityRole="imagebutton" onPress={toggleZoom}>
           <Image
             resizeMode="contain"
-            source={{ uri }}
+            source={{ uri, headers }}
             style={{ height: height * scale, width: width * scale }}
           />
         </Pressable>
@@ -469,56 +478,42 @@ function useEvidenceAuthHeaders(): Record<string, string> | undefined {
 function useEvidenceSource(
   taskId: number,
   evidence: TaskEvidence | null,
+  headers: Record<string, string> | undefined,
 ): {
   uri: string | null;
   headers?: Record<string, string>;
   isLoading: boolean;
 } {
-  const headers = useEvidenceAuthHeaders();
   const [uri, setUri] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
     let objectUrl: string | null = null;
-    const startLoadingTimer = setTimeout(() => {
-      if (isMounted && evidence) {
-        setUri(null);
-        setIsLoading(true);
-      }
-    }, 0);
 
     if (!evidence) {
       return () => {
         isMounted = false;
-        clearTimeout(startLoadingTimer);
+      };
+    }
+
+    if (Platform.OS !== 'web') {
+      return () => {
+        isMounted = false;
       };
     }
 
     void (async () => {
+      setUri(null);
+      setIsLoading(true);
       try {
-        if (Platform.OS === 'web') {
-          const response = await httpClient.get<Blob>(
-            tareasService.evidenceUrl(taskId, evidence.nombre),
-            { responseType: 'blob' },
-          );
-          objectUrl = URL.createObjectURL(response.data);
-          if (isMounted) {
-            setUri(objectUrl);
-          }
-          return;
-        }
-
-        if (evidence.tipo === 'video') {
-          if (isMounted) {
-            setUri(tareasService.evidenceUrl(taskId, evidence.nombre));
-          }
-          return;
-        }
-
-        const file = await downloadEvidenceFile(taskId, evidence);
+        const response = await httpClient.get<Blob>(
+          tareasService.evidenceUrl(taskId, evidence.nombre),
+          { responseType: 'blob' },
+        );
+        objectUrl = URL.createObjectURL(response.data);
         if (isMounted) {
-          setUri(file.uri);
+          setUri(objectUrl);
         }
       } catch (error) {
         console.warn(
@@ -534,18 +529,20 @@ function useEvidenceSource(
 
     return () => {
       isMounted = false;
-      clearTimeout(startLoadingTimer);
       if (objectUrl) {
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [evidence, taskId]);
+  }, [evidence, headers, taskId]);
 
   return {
-    headers:
-      Platform.OS !== 'web' && evidence?.tipo === 'video' ? headers : undefined,
-    isLoading,
-    uri,
+    headers: Platform.OS !== 'web' ? headers : undefined,
+    isLoading: Platform.OS === 'web' ? isLoading : false,
+    uri: Platform.OS === 'web'
+      ? uri
+      : evidence
+        ? tareasService.evidenceUrl(taskId, evidence.nombre)
+        : null,
   };
 }
 
@@ -561,7 +558,8 @@ async function downloadEvidenceFile(
 
   const localName = `${taskId}-${evidence.nombre.replace(/[^\w.-]/g, '_')}`;
   const target = new ExpoFile(directory, localName);
-  if (target.exists) return target;
+  if (target.exists && target.size > 0) return target;
+  if (target.exists) target.delete();
 
   return ExpoFile.downloadFileAsync(
     tareasService.evidenceDownloadUrl(taskId, evidence.nombre),
@@ -718,6 +716,16 @@ const styles = StyleSheet.create({
     color: colors.whiteMuted,
     fontSize: typography.overline,
     fontWeight: '700',
+  },
+  cardLoadingOverlay: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(28, 25, 25, 0.45)',
+    bottom: 0,
+    justifyContent: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
   },
   cardImage: {
     backgroundColor: colors.whiteMuted,

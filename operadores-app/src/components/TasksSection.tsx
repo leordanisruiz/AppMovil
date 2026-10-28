@@ -570,7 +570,6 @@ function TaskDetail({
         </View>
 
         <EvidenceGallery
-          canManage={canManageEvidence}
           emptyMessage="Aún no has enviado evidencias para esta tarea."
           evidences={task.evidencias}
           taskId={task.id}

@@ -388,7 +388,6 @@ function CreatedTaskDetail({
           Evidencias ({task.evidencias.length})
         </Text>
         <EvidenceGallery
-          canManage={canManageEvidence}
           emptyMessage="El operador aún no ha cargado evidencias."
           evidences={task.evidencias}
           taskId={task.id}

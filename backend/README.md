@@ -139,7 +139,8 @@ de que Operaciones validará la evidencia antes de cerrar la novedad en SICO.
    La URL configurada en la app debe usar la IPv4 del computador, no
    `localhost`.
 8. Para solicitudes desde el navegador, configure `CORS_ORIGINS` como una
-   lista separada por comas de los orígenes exactos autorizados. El valor local
+   lista separada por comas de los orígenes autorizados (dominio y puerto, sin
+   rutas como `/api-movil`). El valor local
    predeterminado permite `http://localhost:8081` y
    `http://127.0.0.1:8081`; en producción, agregue el origen HTTPS del frontend
    publicado. No use `*` para una app que envía credenciales o tokens.

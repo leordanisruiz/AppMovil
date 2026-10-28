@@ -808,33 +808,49 @@ class TareasService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="La evidencia no existe.",
             )
-        if not any(
-            evidence.get("nombre") == nombre
-            for evidence in task["evidencias"] or []
-        ):
+        evidence_record = next(
+            (
+                evidence
+                for evidence in task["evidencias"] or []
+                if evidence.get("nombre") == nombre
+            ),
+            None,
+        )
+        if evidence_record is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="La evidencia no existe.",
             )
 
+        operator_directory = _get_operator_evidence_directory(
+            operator_identificacion
+        ).resolve()
         evidence_directory = _get_task_evidence_directory(
             operator_identificacion,
             tarea_id=tarea_id,
             novedades_ids=task.get("novedades_ids", []),
         )
-        path = (evidence_directory / nombre).resolve()
-        legacy_directory = _get_operator_evidence_directory(operator_identificacion)
-        legacy_path = (legacy_directory / nombre).resolve()
-        if not path.is_relative_to(evidence_directory.resolve()):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="La evidencia no existe.",
-            )
-        if not path.is_file() and legacy_path.is_relative_to(legacy_directory.resolve()):
+        saved_route = str(evidence_record.get("ruta") or "").strip()
+        path: Path | None = None
+        if saved_route:
+            route_path = (
+                Path(get_settings().evidencias_path)
+                / saved_route.lstrip("/\\")
+            ).resolve()
+            if route_path.is_relative_to(operator_directory) and route_path.is_file():
+                path = route_path
+
+        legacy_path = (operator_directory / nombre).resolve()
+        task_path = (evidence_directory / nombre).resolve()
+        if path is None and task_path.is_relative_to(evidence_directory.resolve()):
+            if task_path.is_file():
+                path = task_path
+        if path is None and legacy_path.is_relative_to(operator_directory):
             # Mantiene accesibles las evidencias guardadas antes de organizarlas
             # en carpetas por tarea.
-            path = legacy_path
-        if not path.is_file():
+            if legacy_path.is_file():
+                path = legacy_path
+        if path is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="La evidencia no existe.",
