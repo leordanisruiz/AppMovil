@@ -317,6 +317,7 @@ def ver_miniatura_evidencia(
     nombre: str,
     request: Request,
     db: Session = Depends(get_db),
+    original: bool = Query(default=False),
 ) -> FileResponse:
     tipo_documento, identificacion = _authenticated_identity(request)
     path, _ = tareas_service.get_evidence_path(
@@ -326,6 +327,16 @@ def ver_miniatura_evidencia(
         tipo_documento=tipo_documento,
         identificacion=identificacion,
     )
+    if original:
+        return FileResponse(
+            path=path,
+            media_type=_media_type_for(path.name),
+            headers={
+                "Cache-Control": "private, max-age=300",
+                "Content-Disposition": "inline",
+            },
+        )
+
     stat = path.stat()
     cache_key = sha256(
         f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")

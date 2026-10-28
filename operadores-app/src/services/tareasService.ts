@@ -137,6 +137,10 @@ export const tareasService = {
     return `${apiBaseUrl}/tareas/${taskId}/evidencias/${encodeURIComponent(nombre)}/thumbnail`;
   },
 
+  evidenceOriginalPreviewUrl(taskId: number, nombre: string): string {
+    return `${this.evidenceThumbnailUrl(taskId, nombre)}?original=true`;
+  },
+
   evidenceDownloadUrl(taskId: number, nombre: string): string {
     return `${apiBaseUrl}/tareas/${taskId}/evidencias/${encodeURIComponent(nombre)}/download`;
   },

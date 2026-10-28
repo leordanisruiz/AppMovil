@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { isAxiosError } from 'axios';
+import Constants from 'expo-constants';
 import {
   ActivityIndicator,
   Image,
@@ -83,6 +84,8 @@ const sectionTitles: Record<PortalSection, string> = {
   'asignacion-tareas': 'Asignación de tareas',
   'mis-datos': 'Mis datos',
 };
+
+const appVersion = Constants.expoConfig?.version ?? '1.1.4';
 
 export function HomeScreen() {
   const { operator, logout, expireSession } = useAuth();
@@ -722,6 +725,7 @@ export function HomeScreen() {
                     {operator?.nombreCompleto ?? 'Operador'}
                   </Text>
                   <Text style={styles.sidebarOperatorCaption}>Sesión activa</Text>
+                  <Text style={styles.sidebarOperatorVersion}>Versión {appVersion}</Text>
                 </View>
               </View>
               <Pressable
@@ -1746,6 +1750,10 @@ const styles = StyleSheet.create({
   sidebarOperatorCaption: {
     color: colors.whiteMuted,
     fontSize: typography.small,
+  },
+  sidebarOperatorVersion: {
+    color: colors.whiteMuted,
+    fontSize: typography.overline,
   },
   sidebarLogout: {
     alignItems: 'center',

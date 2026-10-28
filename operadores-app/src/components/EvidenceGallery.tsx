@@ -97,7 +97,7 @@ function EvidenceCard({
   const [hasPreviewError, setHasPreviewError] = useState(false);
   const [isPreviewLoaded, setPreviewLoaded] = useState(false);
   const [useOriginalPreview, setUseOriginalPreview] = useState(false);
-  const { isLoading, uri: previewUri } = useEvidenceSource(
+  const { hasError: sourceError, isLoading, uri: previewUri } = useEvidenceSource(
     taskId,
     evidence,
     headers,
@@ -106,6 +106,19 @@ function EvidenceCard({
   );
   const isImage = evidence.tipo === 'image';
   const showImage = isImage && !hasPreviewError && previewUri !== null;
+
+  useEffect(() => {
+    if (!showImage || isPreviewLoaded || hasPreviewError) return;
+    const timeout = setTimeout(() => {
+      if (!useOriginalPreview) {
+        setPreviewLoaded(false);
+        setUseOriginalPreview(true);
+      } else {
+        setHasPreviewError(true);
+      }
+    }, 15_000);
+    return () => clearTimeout(timeout);
+  }, [hasPreviewError, isPreviewLoaded, showImage, useOriginalPreview]);
 
   return (
     <Pressable
@@ -137,9 +150,13 @@ function EvidenceCard({
           </View>
         ) : (
           <View style={styles.cardPlaceholder}>
-            <Text style={styles.cardPlaceholderIcon}>{isImage ? '▧' : '▶'}</Text>
+            <Text style={styles.cardPlaceholderIcon}>
+              {hasPreviewError || sourceError ? '!' : isImage ? '▧' : '▶'}
+            </Text>
             <Text style={styles.cardPlaceholderLabel}>
-              {isImage ? 'IMAGEN' : 'VIDEO'}
+              {hasPreviewError || sourceError
+                ? 'NO DISPONIBLE'
+                : isImage ? 'IMAGEN' : 'VIDEO'}
             </Text>
           </View>
         )}
@@ -198,11 +215,19 @@ function EvidenceViewer({
     [index, onClose, width],
   );
   const [busyAction, setBusyAction] = useState<EvidenceAction | null>(null);
-  const { headers: sourceHeaders, isLoading, uri: sourceUri } = useEvidenceSource(
+  const [sourceRetry, setSourceRetry] = useState(0);
+  const {
+    hasError: sourceError,
+    headers: sourceHeaders,
+    isLoading,
+    uri: sourceUri,
+  } = useEvidenceSource(
     taskId,
     index === null ? null : evidences[index],
     headers,
     headersReady,
+    false,
+    sourceRetry,
   );
 
   if (index === null) return null;
@@ -268,7 +293,9 @@ function EvidenceViewer({
             <ResolvedZoomableImage
               headers={sourceHeaders ?? headers}
               height={stageHeight}
+              hasError={sourceError}
               isLoading={isLoading}
+              onRetry={() => setSourceRetry((retry) => retry + 1)}
               uri={sourceUri}
               width={width}
             />
@@ -361,16 +388,20 @@ function ResolvedZoomableImage({
   uri,
   headers,
   isLoading,
+  hasError,
+  onRetry,
   width,
   height,
 }: {
   uri: string | null;
   headers?: Record<string, string>;
   isLoading: boolean;
+  hasError: boolean;
+  onRetry: () => void;
   width: number;
   height: number;
 }) {
-  if (isLoading || !uri) {
+  if (isLoading) {
     return (
       <View style={[styles.loadingStage, { height, width }]}>
         <ActivityIndicator color={colors.white} />
@@ -379,7 +410,44 @@ function ResolvedZoomableImage({
     );
   }
 
-  return <ZoomableImage headers={headers} height={height} uri={uri} width={width} />;
+  if (hasError || !uri) {
+    return <EvidenceLoadError height={height} onRetry={onRetry} width={width} />;
+  }
+
+  return (
+    <ZoomableImage
+      key={uri}
+      headers={headers}
+      height={height}
+      uri={uri}
+      width={width}
+    />
+  );
+}
+
+function EvidenceLoadError({
+  height,
+  onRetry,
+  width,
+}: {
+  height: number;
+  onRetry: () => void;
+  width: number;
+}) {
+  return (
+    <View style={[styles.loadingStage, { height, width }]}>
+      <Text style={styles.imageErrorText}>
+        No se pudo cargar la imagen. Revisa tu conexión e inténtalo de nuevo.
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={onRetry}
+        style={styles.imageRetryButton}
+      >
+        <Text style={styles.imageRetryText}>Reintentar</Text>
+      </Pressable>
+    </View>
+  );
 }
 
 function ZoomableImage({
@@ -394,23 +462,79 @@ function ZoomableImage({
   height: number;
 }) {
   const [scale, setScale] = useState(1);
+  const [loadState, setLoadState] = useState<'loading' | 'loaded' | 'error'>(
+    'loading',
+  );
+  const [imageRetry, setImageRetry] = useState(0);
   const lastTap = useRef(0);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setLoadState((current) => current === 'loading' ? 'error' : current);
+    }, 15_000);
+    return () => clearTimeout(timeout);
+  }, [imageRetry, uri]);
+
+  const image = (
+    imageWidth: number,
+    imageHeight: number,
+  ) => (
+    <Image
+      key={imageRetry}
+      onError={(event) => {
+        console.warn(
+          'No se pudo cargar la imagen de evidencia:',
+          event.nativeEvent.error,
+        );
+        setLoadState('error');
+      }}
+      onLoad={() => setLoadState('loaded')}
+      onLoadStart={() => setLoadState('loading')}
+      resizeMode="contain"
+      source={{ uri, headers }}
+      style={{ height: imageHeight, width: imageWidth }}
+    />
+  );
+
+  const loadStatus = loadState === 'loaded' ? null : (
+    <View style={[styles.imageStatusOverlay, { height, width }]}>
+      {loadState === 'loading' ? (
+        <>
+          <ActivityIndicator color={colors.white} />
+          <Text style={styles.loadingStageText}>Cargando imagen...</Text>
+        </>
+      ) : (
+        <>
+          <Text style={styles.imageErrorText}>No se pudo cargar la imagen.</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setLoadState('loading');
+              setImageRetry((retry) => retry + 1);
+            }}
+            style={styles.imageRetryButton}
+          >
+            <Text style={styles.imageRetryText}>Reintentar</Text>
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
 
   if (Platform.OS === 'ios') {
     return (
-      <ScrollView
-        centerContent
-        contentContainerStyle={styles.zoomContent}
-        maximumZoomScale={6}
-        minimumZoomScale={1}
-        style={{ height, width }}
-      >
-        <Image
-          resizeMode="contain"
-          source={{ uri, headers }}
+      <View style={{ height, width }}>
+        <ScrollView
+          centerContent
+          contentContainerStyle={styles.zoomContent}
+          maximumZoomScale={6}
+          minimumZoomScale={1}
           style={{ height, width }}
-        />
-      </ScrollView>
+        >
+          {image(width, height)}
+        </ScrollView>
+        {loadStatus}
+      </View>
     );
   }
 
@@ -425,17 +549,16 @@ function ZoomableImage({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.zoomContent} style={{ height, width }}>
-      <ScrollView contentContainerStyle={styles.zoomContent} horizontal>
-        <Pressable accessibilityRole="imagebutton" onPress={toggleZoom}>
-          <Image
-            resizeMode="contain"
-            source={{ uri, headers }}
-            style={{ height: height * scale, width: width * scale }}
-          />
-        </Pressable>
+    <View style={{ height, width }}>
+      <ScrollView contentContainerStyle={styles.zoomContent} style={{ height, width }}>
+        <ScrollView contentContainerStyle={styles.zoomContent} horizontal>
+          <Pressable accessibilityRole="imagebutton" onPress={toggleZoom}>
+            {image(width * scale, height * scale)}
+          </Pressable>
+        </ScrollView>
       </ScrollView>
-    </ScrollView>
+      {loadStatus}
+    </View>
   );
 }
 
@@ -510,13 +633,16 @@ function useEvidenceSource(
   headers: Record<string, string> | undefined,
   headersReady: boolean,
   thumbnail = false,
+  retryKey = 0,
 ): {
   uri: string | null;
   headers?: Record<string, string>;
   isLoading: boolean;
+  hasError: boolean;
 } {
   const [uri, setUri] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -543,11 +669,11 @@ function useEvidenceSource(
     void (async () => {
       setUri(null);
       setIsLoading(true);
+      setHasError(false);
+      setHasError(false);
       try {
         const response = await httpClient.get<Blob>(
-          thumbnail
-            ? tareasService.evidenceThumbnailUrl(taskId, evidence.nombre)
-            : tareasService.evidenceUrl(taskId, evidence.nombre),
+          getEvidenceSourceUrl(taskId, evidence, thumbnail),
           { headers, responseType: 'blob' },
         );
         objectUrl = URL.createObjectURL(response.data);
@@ -558,7 +684,7 @@ function useEvidenceSource(
         if (thumbnail) {
           try {
             const fallbackResponse = await httpClient.get<Blob>(
-              tareasService.evidenceUrl(taskId, evidence.nombre),
+              getEvidenceSourceUrl(taskId, evidence, false),
               { headers, responseType: 'blob' },
             );
             objectUrl = URL.createObjectURL(fallbackResponse.data);
@@ -570,6 +696,7 @@ function useEvidenceSource(
             // Both the optimized thumbnail and original image failed.
           }
         }
+        if (isMounted) setHasError(true);
         console.warn(
           `No fue posible preparar la evidencia ${evidence.nombre} para visualización:`,
           error,
@@ -587,19 +714,34 @@ function useEvidenceSource(
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [evidence, headers, headersReady, taskId, thumbnail]);
+  }, [evidence, headers, headersReady, retryKey, taskId, thumbnail]);
 
   return {
     headers: Platform.OS !== 'web' ? headers : undefined,
     isLoading: !headersReady || (Platform.OS === 'web' && isLoading),
+    hasError,
     uri: Platform.OS === 'web'
       ? uri
       : headersReady && evidence
         ? thumbnail && evidence.tipo === 'image'
           ? tareasService.evidenceThumbnailUrl(taskId, evidence.nombre)
-          : tareasService.evidenceUrl(taskId, evidence.nombre)
+            : getEvidenceSourceUrl(taskId, evidence, false)
         : null,
   };
+}
+
+function getEvidenceSourceUrl(
+  taskId: number,
+  evidence: TaskEvidence,
+  thumbnail: boolean,
+): string {
+  if (thumbnail && evidence.tipo === 'image') {
+    return tareasService.evidenceThumbnailUrl(taskId, evidence.nombre);
+  }
+  if (Platform.OS === 'web' && evidence.tipo === 'image') {
+    return tareasService.evidenceOriginalPreviewUrl(taskId, evidence.nombre);
+  }
+  return tareasService.evidenceUrl(taskId, evidence.nombre);
 }
 
 async function downloadEvidenceFile(
@@ -893,6 +1035,33 @@ const styles = StyleSheet.create({
   loadingStageText: {
     color: colors.whiteMuted,
     fontSize: typography.small,
+  },
+  imageStatusOverlay: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(12, 10, 10, 0.78)',
+    gap: spacing.small,
+    justifyContent: 'center',
+    left: 0,
+    padding: spacing.large,
+    position: 'absolute',
+    top: 0,
+    zIndex: 2,
+  },
+  imageErrorText: {
+    color: colors.white,
+    fontSize: typography.small,
+    textAlign: 'center',
+  },
+  imageRetryButton: {
+    backgroundColor: colors.primary,
+    borderRadius: radius.medium,
+    paddingHorizontal: spacing.medium,
+    paddingVertical: spacing.small,
+  },
+  imageRetryText: {
+    color: colors.white,
+    fontSize: typography.small,
+    fontWeight: '700',
   },
   zoomContent: {
     alignItems: 'center',
