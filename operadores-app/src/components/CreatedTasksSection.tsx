@@ -10,6 +10,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,10 +23,13 @@ import { tareasService } from '../services/tareasService';
 import { useAuth } from '../store/AuthProvider';
 import { colors, radius, spacing, typography } from '../theme';
 import type { OperatorTask, TaskStatus } from '../types/tarea';
+import { DesktopTasksTable, type TaskStatusFilter } from './DesktopTasksTable';
 
 const PAGE_SIZE = 6;
 
-export function CreatedTasksSection() {
+export function CreatedTasksSection({ initialStatusFilter = 'TODAS' }: { initialStatusFilter?: TaskStatusFilter }) {
+  const { width } = useWindowDimensions();
+  const desktop = Platform.OS === 'web' && width >= 1200;
   const queryClient = useQueryClient();
   const { operator } = useAuth();
   const canManageEvidence = operator?.rolId === 1 || operator?.rolId === 2;
@@ -237,6 +241,15 @@ export function CreatedTasksSection() {
             puedas hacerles seguimiento.
           </Text>
         </View>
+      ) : desktop ? (
+        <DesktopTasksTable
+          tasks={tasks}
+          initialStatus={initialStatusFilter}
+          onOpen={(task) => {
+            setCloseError(null);
+            setSelectedTaskId(task.id);
+          }}
+        />
       ) : (
         <View style={styles.tableCard}>
           <Text style={styles.tableHint}>

@@ -13,6 +13,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -35,6 +36,10 @@ import type { Novedad } from '../types/novedad';
 import { useAuth } from '../store/AuthProvider';
 import { colors, radius, spacing, typography } from '../theme';
 import { getFirstName } from '../utils/formatName';
+import { getResponsiveLayout } from '../constants/responsive';
+import { ResponsiveShell } from '../components/ResponsiveLayouts';
+import { EvidenceLibrarySection } from '../components/EvidenceLibrarySection';
+import type { TaskStatus } from '../types/tarea';
 
 type PortalSection =
   | 'inicio'
@@ -42,7 +47,8 @@ type PortalSection =
   | 'tareas'
   | 'tareas-creadas'
   | 'asignacion-tareas'
-  | 'mis-datos';
+  | 'mis-datos'
+  | 'evidencias';
 type WelcomeNoticeContent = {
   title: string;
   message: string;
@@ -59,6 +65,7 @@ const menuItems: {
 }[] = [
   { label: 'Inicio', value: 'inicio', description: 'Resumen del portal' },
   { label: 'Novedades', value: 'novedades', description: 'Comunicados y avisos' },
+  { label: 'Evidencias', value: 'evidencias', description: 'Galería de archivos', icon: '▧' },
   { label: 'Tareas', value: 'tareas', description: 'Actividades asignadas', icon: '☑' },
   {
     label: 'Tareas creadas',
@@ -82,11 +89,16 @@ const sectionTitles: Record<PortalSection, string> = {
   'tareas-creadas': 'Tareas creadas',
   'asignacion-tareas': 'Asignación de tareas',
   'mis-datos': 'Mis datos',
+  evidencias: 'Evidencias',
 };
 
 const appVersion = Constants.expoConfig?.version ?? '1.1.4';
 
 export function HomeScreen() {
+  const { width } = useWindowDimensions();
+  const responsiveLayout = Platform.OS === 'web' ? getResponsiveLayout(width) : 'mobile';
+  const isDesktop = responsiveLayout === 'desktop';
+  const isTablet = responsiveLayout === 'tablet';
   const { operator, logout, expireSession } = useAuth();
   const navigation = useNavigation();
   const operatorCode = operator?.codigo?.trim() || null;
@@ -112,6 +124,7 @@ export function HomeScreen() {
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<PortalSection>('inicio');
+  const [taskInitialFilter, setTaskInitialFilter] = useState<'TODAS' | TaskStatus>('TODAS');
   const backSwipe = useMemo(
     () =>
       PanResponder.create({
@@ -282,18 +295,44 @@ export function HomeScreen() {
   };
 
   const selectSection = (section: PortalSection) => {
+    if (section === 'tareas' || section === 'tareas-creadas') setTaskInitialFilter('TODAS');
     setActiveSection(section);
     setIsMenuOpen(false);
   };
 
+  const openTasksWithFilter = (filter: 'TODAS' | TaskStatus) => {
+    setTaskInitialFilter(filter);
+    setActiveSection(canAssignTasks ? 'tareas-creadas' : 'tareas');
+    setIsMenuOpen(false);
+  };
+
+  const visibleMenuItems = menuItems.filter(
+    (item) =>
+      (item.value !== 'asignacion-tareas' || canAssignTasks) &&
+      (item.value !== 'tareas' || !canAssignTasks) &&
+      (item.value !== 'tareas-creadas' || canAssignTasks),
+  );
+  const dashboardTasks = canAssignTasks ? createdTasksQuery.data : tareasQuery.data;
+
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-      <View style={styles.appShell} {...backSwipe.panHandlers}>
+      <ResponsiveShell
+        activeSection={activeSection}
+        appVersion={appVersion}
+        desktop={isDesktop}
+        items={visibleMenuItems}
+        onLogout={handleLogout}
+        onSelect={(section) => selectSection(section as PortalSection)}
+        operatorName={operator?.nombreCompleto ?? 'Operador'}
+        tablet={isTablet}
+        title={sectionTitles[activeSection]}
+      >
+      <View style={[styles.appShell, isDesktop && styles.desktopShell]} {...(isDesktop ? {} : backSwipe.panHandlers)}>
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.topBar}>
+          <View style={[styles.topBar, isDesktop && styles.desktopHidden]}>
             <Pressable
               accessibilityLabel="Abrir menú de navegación"
               accessibilityRole="button"
@@ -321,7 +360,7 @@ export function HomeScreen() {
 
           </View>
 
-          <View style={styles.pageHeading}>
+          <View style={[styles.pageHeading, isDesktop && styles.desktopHidden]}>
             <Text style={styles.pageEyebrow}>PORTAL DEL OPERADOR</Text>
             <Text style={styles.pageTitle}>{sectionTitles[activeSection]}</Text>
           </View>
@@ -399,7 +438,22 @@ export function HomeScreen() {
 
           {activeSection === 'inicio' ? (
             <View style={styles.sectionContent}>
-              <View style={styles.welcomeCard}>
+              {isDesktop ? (
+                <DesktopDashboard
+                  firstName={firstName}
+                  pending={dashboardTasks?.filter((task) => task.estado === 'PENDIENTE').length ?? 0}
+                  inProgress={dashboardTasks?.filter((task) => task.estado === 'EN_PROCESO').length ?? 0}
+                  completed={dashboardTasks?.filter((task) => task.estado === 'COMPLETADA').length ?? 0}
+                  novelties={novedades?.total ?? 0}
+                  evidenceCount={dashboardTasks?.reduce((sum, task) => sum + task.evidencias.length, 0) ?? 0}
+                  closed={dashboardTasks?.filter((task) => task.estado === 'CERRADO').length ?? 0}
+                  onTasks={openTasksWithFilter}
+                  onNovelties={() => selectSection('novedades')}
+                  onEvidence={() => selectSection('evidencias')}
+                  loading={(canAssignTasks ? createdTasksQuery.isLoading : tareasQuery.isLoading) || isLoading}
+                />
+              ) : null}
+              {!isDesktop ? <View style={styles.welcomeCard}>
                 <View style={styles.welcomeAccent} />
                 <Text style={styles.welcomeEyebrow}>BIENVENIDO</Text>
                 <Text style={styles.welcomeTitle}>Hola, {firstName}</Text>
@@ -411,13 +465,13 @@ export function HomeScreen() {
                     IDENTIFICACIÓN  ·  {operator?.identificacion ?? '—'}
                   </Text>
                 </View>
-              </View>
+              </View> : null}
 
-              <SectionHeading
+              {!isDesktop ? <SectionHeading
                 title="Resumen de operación"
                 supportingText="Consulta rápidamente tu información más importante."
-              />
-              <View style={styles.summaryRow}>
+              /> : null}
+              {!isDesktop ? <View style={styles.summaryRow}>
                 {canAssignTasks ? (
                   <Pressable
                     accessibilityRole="button"
@@ -471,9 +525,9 @@ export function HomeScreen() {
                     </Pressable>
                   </>
                 )}
-              </View>
+              </View> : null}
 
-              <Pressable
+              {!isDesktop ? <Pressable
                 accessibilityRole="button"
                 onPress={() => selectSection('mis-datos')}
                 style={styles.profileShortcut}
@@ -492,7 +546,7 @@ export function HomeScreen() {
                   </Text>
                 </View>
                 <Text style={styles.profileShortcutArrow}>›</Text>
-              </Pressable>
+              </Pressable> : null}
             </View>
           ) : null}
 
@@ -596,11 +650,12 @@ export function HomeScreen() {
           ) : null}
 
           {activeSection === 'tareas' && !canAssignTasks ? (
-            <TasksSection operatorCode={operatorCode} />
+            <TasksSection initialStatusFilter={taskInitialFilter} operatorCode={operatorCode} />
           ) : null}
           {activeSection === 'tareas-creadas' && canAssignTasks ? (
-            <CreatedTasksSection />
+            <CreatedTasksSection initialStatusFilter={taskInitialFilter} />
           ) : null}
+          {activeSection === 'evidencias' ? <EvidenceLibrarySection operatorCode={operatorCode} /> : null}
           {activeSection === 'asignacion-tareas' && canAssignTasks ? (
             <TaskAssignmentSection />
           ) : null}
@@ -609,7 +664,7 @@ export function HomeScreen() {
           <Text style={styles.footer}>Portal Operadores · Uso corporativo</Text>
         </ScrollView>
 
-        {isMenuOpen ? (
+        {isMenuOpen && !isDesktop ? (
           <>
             <Pressable
               accessibilityLabel="Cerrar menú"
@@ -725,7 +780,31 @@ export function HomeScreen() {
           </>
         ) : null}
       </View>
+      </ResponsiveShell>
     </SafeAreaView>
+  );
+}
+
+function DesktopDashboard({
+  firstName, pending, inProgress, completed, closed, novelties, evidenceCount, onTasks, onNovelties, onEvidence, loading,
+}: {
+  firstName: string; pending: number; inProgress: number; completed: number; closed: number; novelties: number;
+  evidenceCount: number; onTasks: (filter: 'TODAS' | TaskStatus) => void; onNovelties: () => void; onEvidence: () => void; loading: boolean;
+}) {
+  const metrics = [
+    { label: 'Tareas pendientes', value: pending, icon: '◷', tone: '#FFF4E5', action: () => onTasks('PENDIENTE') },
+    { label: 'En proceso', value: inProgress, icon: '↻', tone: '#EEF5FF', action: () => onTasks('EN_PROCESO') },
+    { label: 'Completadas', value: completed, icon: '✓', tone: '#EAF7EF', action: () => onTasks('COMPLETADA') },
+    { label: 'Cerradas', value: closed, icon: '✓', tone: '#EEF1F4', action: () => onTasks('CERRADO') },
+    { label: 'Novedades activas', value: novelties, icon: '↗', tone: '#FFF0F0', action: onNovelties },
+    { label: 'Evidencias cargadas', value: evidenceCount, icon: '▧', tone: '#F2EEFF', action: onEvidence },
+  ];
+  return (
+    <View style={styles.dashboard}>
+      <View style={styles.dashboardIntro}><View><Text style={styles.dashboardEyebrow}>PANEL DE CONTROL</Text><Text style={styles.dashboardTitle}>Hola, {firstName}</Text><Text style={styles.dashboardCopy}>Estado actual de tu operación y actividad asignada.</Text></View><View style={styles.dashboardDate}><Text style={styles.dashboardDateLabel}>HOY</Text><Text style={styles.dashboardDateValue}>{new Intl.DateTimeFormat('es-CO', { dateStyle: 'long' }).format(new Date())}</Text></View></View>
+      <View style={styles.metricGrid}>{metrics.map((metric) => <Pressable key={metric.label} accessibilityRole="button" onPress={metric.action} style={styles.metricCard}><View style={[styles.metricIcon, { backgroundColor: metric.tone }]}><Text style={styles.metricIconText}>{metric.icon}</Text></View><Text style={styles.metricLabel}>{metric.label}</Text><Text style={styles.metricValue}>{loading ? '—' : metric.value}</Text><Text style={styles.metricLink}>Ver detalle  ›</Text></Pressable>)}</View>
+      <View style={styles.dashboardHint}><Text style={styles.dashboardHintIcon}>✦</Text><View style={{ flex: 1 }}><Text style={styles.dashboardHintTitle}>Tu espacio de trabajo</Text><Text style={styles.dashboardHintCopy}>Consulta tareas, novedades y evidencias desde el menú lateral.</Text></View></View>
+    </View>
   );
 }
 
@@ -932,6 +1011,32 @@ const styles = StyleSheet.create({
   appShell: {
     flex: 1,
   },
+  desktopShell: {
+    backgroundColor: '#F4F6F8',
+    minWidth: 0,
+  },
+  desktopHidden: {
+    display: 'none',
+  },
+  dashboard: { gap: spacing.large, marginBottom: spacing.large },
+  dashboardIntro: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: spacing.large },
+  dashboardEyebrow: { color: colors.primary, fontSize: 10, fontWeight: '800', letterSpacing: 1.3 },
+  dashboardTitle: { color: '#252B31', fontSize: 28, fontWeight: '800', marginTop: 5 },
+  dashboardCopy: { color: '#76808A', fontSize: 13, marginTop: 5 },
+  dashboardDate: { alignItems: 'flex-end', backgroundColor: '#FFFFFF', borderColor: '#E7EAEE', borderRadius: radius.medium, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 11 },
+  dashboardDateLabel: { color: '#929AA4', fontSize: 9, fontWeight: '800', letterSpacing: 1 },
+  dashboardDateValue: { color: '#434B54', fontSize: 12, fontWeight: '700', marginTop: 4 },
+  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+  metricCard: { backgroundColor: '#FFFFFF', borderColor: '#E7EAEE', borderRadius: 13, borderWidth: 1, flexBasis: 170, flexGrow: 1, gap: 8, minHeight: 156, padding: 16 },
+  metricIcon: { alignItems: 'center', borderRadius: 10, height: 34, justifyContent: 'center', width: 34 },
+  metricIconText: { color: '#474E57', fontSize: 16, fontWeight: '800' },
+  metricLabel: { color: '#707983', fontSize: 11, fontWeight: '700' },
+  metricValue: { color: '#242B32', fontSize: 26, fontWeight: '800' },
+  metricLink: { color: colors.primary, fontSize: 10, fontWeight: '700' },
+  dashboardHint: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#E7EAEE', borderRadius: 13, borderWidth: 1, flexDirection: 'row', gap: 13, padding: 17 },
+  dashboardHintIcon: { color: colors.primary, fontSize: 22 },
+  dashboardHintTitle: { color: '#343A40', fontSize: 13, fontWeight: '800' },
+  dashboardHintCopy: { color: '#7C858F', fontSize: 11, marginTop: 3 },
   content: {
     flexGrow: 1,
     gap: spacing.large,

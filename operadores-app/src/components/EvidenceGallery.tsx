@@ -25,9 +25,15 @@ import { tokenStorage } from '../services/tokenStorage';
 import { colors, radius, spacing, typography } from '../theme';
 import type { TaskEvidence, TaskEvidenceType } from '../types/tarea';
 
+export type GalleryEvidence = TaskEvidence & {
+  taskId?: number;
+  taskLabel?: string;
+  taskDescription?: string;
+};
+
 type EvidenceGalleryProps = {
   taskId: number;
-  evidences: TaskEvidence[];
+  evidences: GalleryEvidence[];
   emptyMessage: string;
 };
 
@@ -43,6 +49,11 @@ export function EvidenceGallery({
   evidences,
   emptyMessage,
 }: EvidenceGalleryProps) {
+  const { width: viewportWidth } = useWindowDimensions();
+  const desktop = Platform.OS === 'web' && viewportWidth >= 1200;
+  const cardWidth = Platform.OS === 'web' && viewportWidth >= 1200
+    ? '23%'
+    : Platform.OS === 'web' && viewportWidth >= 768 ? '31%' : '48%';
   const { headers, headersReady } = useEvidenceAuthHeaders();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [previewLimit, setPreviewLimit] = useState(4);
@@ -52,7 +63,7 @@ export function EvidenceGallery({
     const initialThumbnails = evidences
       .filter((evidence) => evidence.tipo === 'image')
       .slice(0, 2)
-      .map((evidence) => tareasService.evidenceThumbnailUrl(taskId, evidence.nombre));
+      .map((evidence) => tareasService.evidenceThumbnailUrl(evidence.taskId ?? taskId, evidence.nombre));
     const prefetchImages = Image.prefetch;
     if (initialThumbnails.length && typeof prefetchImages === 'function') {
       void Promise.resolve(
@@ -76,10 +87,10 @@ export function EvidenceGallery({
 
   return (
     <View style={styles.gallery}>
-      <View style={styles.grid}>
+      <View style={[styles.grid, desktop && styles.gridDesktop]}>
         {evidences.map((evidence, index) => (
           <EvidenceCard
-            key={evidence.nombre}
+            key={`${evidence.taskId ?? taskId}-${evidence.nombre}`}
             evidence={evidence}
             headers={headers}
             headersReady={headersReady}
@@ -89,7 +100,8 @@ export function EvidenceGallery({
             }
             onPreviewSettled={() => setPreviewLimit((current) => current + 1)}
             onPress={() => setActiveIndex(index)}
-            taskId={taskId}
+            taskId={evidence.taskId ?? taskId}
+            cardWidth={cardWidth}
           />
         ))}
       </View>
@@ -114,14 +126,16 @@ function EvidenceCard({
   shouldLoadPreview,
   onPreviewSettled,
   onPress,
+  cardWidth,
 }: {
   taskId: number;
-  evidence: TaskEvidence;
+  evidence: GalleryEvidence;
   headers: Record<string, string> | undefined;
   headersReady: boolean;
   shouldLoadPreview: boolean;
   onPreviewSettled: () => void;
   onPress: () => void;
+  cardWidth: string;
 }) {
   const [hasPreviewError, setHasPreviewError] = useState(false);
   const [isPreviewLoaded, setPreviewLoaded] = useState(false);
@@ -142,7 +156,7 @@ function EvidenceCard({
       accessibilityLabel={`Abrir evidencia ${getEvidenceDisplayName(evidence.nombre)}`}
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+      style={({ pressed }) => [styles.card, { width: cardWidth }, pressed && styles.cardPressed]}
     >
       <View style={styles.cardPreview}>
         {showImage ? (
@@ -194,6 +208,12 @@ function EvidenceCard({
       <Text style={styles.cardMeta}>
         {isImage ? 'Imagen' : 'Video'} · {formatEvidenceDate(evidence.fecha)}
       </Text>
+      {evidence.taskLabel ? (
+        <View style={styles.taskContext}>
+          <Text numberOfLines={1} style={styles.taskContextTitle}>{evidence.taskLabel}</Text>
+          <Text numberOfLines={2} style={styles.taskContextDescription}>{evidence.taskDescription}</Text>
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -208,7 +228,7 @@ function EvidenceViewer({
   onClose,
 }: {
   taskId: number;
-  evidences: TaskEvidence[];
+  evidences: GalleryEvidence[];
   headers: Record<string, string> | undefined;
   headersReady: boolean;
   index: number | null;
@@ -216,6 +236,7 @@ function EvidenceViewer({
   onClose: () => void;
 }) {
   const { height, width } = useWindowDimensions();
+  const desktop = Platform.OS === 'web' && width >= 1200;
   const insets = useSafeAreaInsets();
   const dismissSwipe = useMemo(
     () =>
@@ -236,14 +257,16 @@ function EvidenceViewer({
   );
   const [busyAction, setBusyAction] = useState<EvidenceAction | null>(null);
   const [sourceRetry, setSourceRetry] = useState(0);
+  const activeEvidence = index === null ? null : evidences[index];
+  const evidenceTaskId = activeEvidence?.taskId ?? taskId;
   const {
     hasError: sourceError,
     headers: sourceHeaders,
     isLoading,
     uri: sourceUri,
   } = useEvidenceSource(
-    taskId,
-    index === null ? null : evidences[index],
+    evidenceTaskId,
+    activeEvidence,
     headers,
     headersReady,
     false,
@@ -255,15 +278,16 @@ function EvidenceViewer({
   const evidence = evidences[index];
   const isImage = evidence.tipo === 'image';
   const displayName = getEvidenceDisplayName(evidence.nombre);
-  const stageHeight = Math.round(height * 0.42);
+  const stageHeight = Math.round(height * (desktop ? 0.76 : 0.42));
+  const mediaWidth = desktop ? Math.round(width * 0.65) : width;
 
   const runAction = async (action: EvidenceAction) => {
     setBusyAction(action);
     try {
       if (Platform.OS === 'web') {
-        await runWebEvidenceAction(taskId, evidence, action);
+        await runWebEvidenceAction(evidenceTaskId, evidence, action);
       } else {
-        const file = await downloadEvidenceFile(taskId, evidence);
+        const file = await downloadEvidenceFile(evidenceTaskId, evidence);
         if (action === 'share') {
           await shareEvidenceFile(file, evidence);
         } else {
@@ -289,9 +313,9 @@ function EvidenceViewer({
       transparent
       visible
     >
-      <View style={styles.viewerBackdrop} {...dismissSwipe.panHandlers}>
+      <View style={[styles.viewerBackdrop, desktop && styles.viewerBackdropDesktop]} {...dismissSwipe.panHandlers}>
         <StatusBar style="light" />
-        <View style={[styles.viewerHeader, { paddingTop: insets.top }]}>
+        <View style={[styles.viewerHeader, desktop && styles.viewerHeaderDesktop, { paddingTop: desktop ? 12 : insets.top }]}>
           <Pressable
             accessibilityLabel="Cerrar visor de evidencias"
             accessibilityHint="Cierra la evidencia y vuelve a la tarea"
@@ -308,7 +332,7 @@ function EvidenceViewer({
           <View style={styles.viewerClose} pointerEvents="none" />
         </View>
 
-        <View style={[styles.viewerStage, { height: stageHeight }]}>
+        <View style={[styles.viewerStage, desktop && styles.viewerStageDesktop, { height: stageHeight, width: mediaWidth }]}>
           {isImage ? (
             <ResolvedZoomableImage
               headers={sourceHeaders ?? headers}
@@ -317,7 +341,7 @@ function EvidenceViewer({
               isLoading={isLoading}
               onRetry={() => setSourceRetry((retry) => retry + 1)}
               uri={sourceUri}
-              width={width}
+              width={mediaWidth}
             />
           ) : (
             <EvidenceVideoPlayer
@@ -325,12 +349,12 @@ function EvidenceViewer({
               height={stageHeight}
               isLoading={isLoading}
               uri={sourceUri}
-              width={width}
+              width={mediaWidth}
             />
           )}
         </View>
 
-        <View style={styles.viewerNav}>
+        <View style={[styles.viewerNav, desktop && styles.viewerNavDesktop]}>
           <Pressable
             accessibilityLabel="Evidencia anterior"
             accessibilityRole="button"
@@ -356,7 +380,7 @@ function EvidenceViewer({
           </Pressable>
         </View>
 
-        <View style={styles.viewerFooter}>
+        <View style={[styles.viewerFooter, desktop && styles.viewerFooterDesktop]}>
           <Text numberOfLines={1} style={styles.viewerName}>
             {displayName}
           </Text>
@@ -364,6 +388,7 @@ function EvidenceViewer({
             {isImage ? 'Imagen' : 'Video'} · Cargada el{' '}
             {formatEvidenceDate(evidence.fecha)}
           </Text>
+          {evidence.taskLabel ? <Text style={styles.viewerTaskContext}>{evidence.taskLabel}{evidence.taskDescription ? ` · ${evidence.taskDescription}` : ''}</Text> : null}
           {isImage && Platform.OS !== 'ios' ? (
             <Text style={styles.viewerHint}>
               Doble toque sobre la imagen para ampliar.
@@ -926,6 +951,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.small,
   },
+  gridDesktop: { gap: 14 },
   card: {
     backgroundColor: colors.background,
     borderColor: colors.border,
@@ -1019,6 +1045,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.small,
     paddingTop: 2,
   },
+  taskContext: { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth, gap: 3, marginTop: 5, paddingHorizontal: spacing.small, paddingVertical: spacing.small },
+  taskContextTitle: { color: colors.text, fontSize: typography.overline, fontWeight: '800' },
+  taskContextDescription: { color: colors.textMuted, fontSize: typography.overline, lineHeight: 15 },
   emptyEvidence: {
     alignItems: 'center',
     backgroundColor: '#FFFAFA',
@@ -1035,6 +1064,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingBottom: spacing.large,
   },
+  viewerBackdropDesktop: { alignItems: 'center', backgroundColor: 'rgba(12, 10, 10, 0.92)', flexDirection: 'row', justifyContent: 'center', paddingHorizontal: 36, paddingTop: 56 },
   viewerHeader: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -1043,6 +1073,7 @@ const styles = StyleSheet.create({
     zIndex: 5,
     paddingHorizontal: spacing.medium,
   },
+  viewerHeaderDesktop: { left: 20, position: 'absolute', right: 20, top: 0 },
   viewerClose: {
     alignItems: 'center',
     elevation: 8,
@@ -1067,6 +1098,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: '100%',
   },
+  viewerStageDesktop: { flex: 1, maxWidth: '70%' },
   loadingStage: {
     alignItems: 'center',
     gap: spacing.small,
@@ -1112,6 +1144,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.large,
   },
+  viewerNavDesktop: { bottom: 28, left: 28, position: 'absolute', right: '34%' },
   viewerNavButton: {
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.14)',
@@ -1134,6 +1167,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.large,
     paddingTop: spacing.medium,
   },
+  viewerFooterDesktop: { marginTop: 0, paddingHorizontal: 26, paddingTop: 0, width: 320 },
   viewerName: {
     color: colors.white,
     fontSize: typography.body,
@@ -1143,6 +1177,7 @@ const styles = StyleSheet.create({
     color: colors.whiteMuted,
     fontSize: typography.small,
   },
+  viewerTaskContext: { color: colors.whiteMuted, fontSize: typography.small, lineHeight: 18, marginTop: spacing.small },
   viewerHint: {
     color: colors.textMuted,
     fontSize: typography.overline,

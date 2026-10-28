@@ -71,4 +71,5 @@ export type TaskEvidenceAsset = {
   size?: number;
   durationMs?: number;
   capturedAt?: string;
+  webFile?: Blob;
 };

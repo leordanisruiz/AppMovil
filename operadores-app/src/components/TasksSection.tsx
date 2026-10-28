@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   ActivityIndicator,
@@ -8,9 +8,11 @@ import {
   Modal,
   PanResponder,
   BackHandler,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -29,9 +31,11 @@ import { useAuth } from '../store/AuthProvider';
 import { AppButton } from './AppButton';
 import { EvidenceGallery } from './EvidenceGallery';
 import { SectionHeading } from './SectionHeading';
+import { DesktopTasksTable, type TaskStatusFilter } from './DesktopTasksTable';
 
 type TasksSectionProps = {
   operatorCode: string | null;
+  initialStatusFilter?: TaskStatusFilter;
 };
 
 const MAX_PHOTOS_PER_TASK = 12;
@@ -49,7 +53,9 @@ const SUPPORTED_EVIDENCE_TYPES = new Set([
   'video/quicktime',
 ]);
 
-export function TasksSection({ operatorCode }: TasksSectionProps) {
+export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: TasksSectionProps) {
+  const { width } = useWindowDimensions();
+  const desktop = Platform.OS === 'web' && width >= 1200;
   const queryClient = useQueryClient();
   const { operator } = useAuth();
   const canManageEvidence = operator?.rolId === 1 || operator?.rolId === 2;
@@ -73,6 +79,9 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
     [selectedTaskId],
   );
   const [selectedAssets, setSelectedAssets] = useState<TaskEvidenceAsset[]>([]);
+  const selectedAssetsRef = useRef<TaskEvidenceAsset[]>([]);
+  useEffect(() => { selectedAssetsRef.current = selectedAssets; }, [selectedAssets]);
+  useEffect(() => () => selectedAssetsRef.current.forEach(releaseWebAsset), []);
   const [isSourcePickerVisible, setIsSourcePickerVisible] = useState(false);
   const [isCompletionConfirmVisible, setIsCompletionConfirmVisible] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -98,6 +107,7 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
     onSuccess: async ({ tarea, evidencias_agregadas }) => {
       queryClient.setQueryData(['tarea', tarea.id], tarea);
       await queryClient.invalidateQueries({ queryKey: ['tareas'] });
+      selectedAssets.forEach(releaseWebAsset);
       setSelectedAssets([]);
       setActionError(null);
       setActionSuccess(
@@ -132,7 +142,7 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
     },
   });
 
-  const addAssets = (assets: TaskEvidenceAsset[]) => {
+  const addAssets = (assets: TaskEvidenceAsset[]): boolean => {
     setActionError(null);
     setActionSuccess(null);
     if (assets.some((asset) => !SUPPORTED_EVIDENCE_TYPES.has(asset.mimeType))) {
@@ -140,7 +150,7 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
         'Formato no compatible',
         'El servidor admite imágenes JPG, PNG, WEBP, HEIC o HEIF y videos MP4 o MOV.',
       );
-      return;
+      return false;
     }
     const additions = assets
       .filter((asset) => !selectedAssets.some((selected) => selected.uri === asset.uri));
@@ -153,18 +163,18 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
     const addedVideos = additions.filter((item) => item.mimeType.startsWith('video/')).length;
     if (photoCount + addedPhotos > MAX_PHOTOS_PER_TASK) {
       Alert.alert('Límite de fotografías', 'Solo se permiten máximo 12 fotografías por tarea.');
-      return;
+      return false;
     }
     if (videoCount + addedVideos > MAX_VIDEOS_PER_TASK) {
       Alert.alert('Límite de videos', 'Solo se permiten máximo 2 videos por tarea.');
-      return;
+      return false;
     }
     if (selectedAssets.length + additions.length > MAX_SELECTED_FILES) {
       Alert.alert(
         'Límite de archivos',
         `Puedes adjuntar hasta ${MAX_SELECTED_FILES} archivos por envío.`,
       );
-      return;
+      return false;
     }
     const videosOverLimit = additions.filter(
       (asset) =>
@@ -177,7 +187,7 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
         'Video demasiado largo',
         'Solo se permiten videos de hasta 3 minutos. Graba o selecciona un video más corto.',
       );
-      return;
+      return false;
     }
     const totalSize = [...selectedAssets, ...additions].reduce(
       (total, asset) => total + (asset.size ?? 0),
@@ -185,9 +195,22 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
     );
     if (totalSize > MAX_SELECTED_SIZE) {
       Alert.alert('Archivos muy pesados', 'El tamaño total no puede superar 100 MB.');
-      return;
+      return false;
     }
     setSelectedAssets([...selectedAssets, ...additions]);
+    return true;
+  };
+
+  const handleDroppedFiles = (files: File[]) => {
+    if (Platform.OS !== 'web') return;
+    const assets = files.map((file): TaskEvidenceAsset => ({
+      uri: URL.createObjectURL(file),
+      name: file.name || `evidencia-${Date.now()}`,
+      mimeType: file.type || inferEvidenceMimeType(file.name),
+      size: file.size,
+      webFile: file,
+    }));
+    if (!addAssets(assets)) assets.forEach(releaseWebAsset);
   };
 
   const showPickerError = (error: unknown) => {
@@ -313,6 +336,8 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
   };
 
   const removeAsset = (uri: string) => {
+    const removed = selectedAssets.find((asset) => asset.uri === uri);
+    if (removed) releaseWebAsset(removed);
     setSelectedAssets((assets) => assets.filter((asset) => asset.uri !== uri));
   };
 
@@ -378,6 +403,7 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
             canManageEvidence={canManageEvidence}
             onAttach={() => setIsSourcePickerVisible(true)}
             onRemoveAsset={removeAsset}
+            onDropFiles={handleDroppedFiles}
             onUpload={() => uploadMutation.mutate()}
             onComplete={() => setIsCompletionConfirmVisible(true)}
           />
@@ -426,7 +452,18 @@ export function TasksSection({ operatorCode }: TasksSectionProps) {
           </Pressable>
         </View>
       ) : tasksQuery.data?.length ? (
-        <View style={styles.taskList}>
+        desktop ? (
+          <DesktopTasksTable
+            tasks={tasksQuery.data}
+            initialStatus={initialStatusFilter}
+            onOpen={(task) => {
+              setActionError(null);
+              setActionSuccess(null);
+              setSelectedAssets([]);
+              setSelectedTaskId(task.id);
+            }}
+          />
+        ) : <View style={styles.taskList}>
           {tasksQuery.data.map((task) => (
             <TaskCard
               key={task.id}
@@ -499,6 +536,7 @@ function TaskDetail({
   canManageEvidence,
   onAttach,
   onRemoveAsset,
+  onDropFiles,
   onUpload,
   onComplete,
 }: {
@@ -511,6 +549,7 @@ function TaskDetail({
   canManageEvidence: boolean;
   onAttach: () => void;
   onRemoveAsset: (uri: string) => void;
+  onDropFiles: (files: File[]) => void;
   onUpload: () => void;
   onComplete: () => void;
 }) {
@@ -569,11 +608,17 @@ function TaskDetail({
           ) : null}
         </View>
 
-        <EvidenceGallery
-          emptyMessage="Aún no has enviado evidencias para esta tarea."
-          evidences={task.evidencias}
-          taskId={task.id}
-        />
+        {Platform.OS === 'web' && canAttach ? createElement('div', {
+          onDragOver: (event: DragEvent) => event.preventDefault(),
+          onDrop: (event: DragEvent) => {
+            event.preventDefault();
+            const files = Array.from(event.dataTransfer?.files ?? []);
+            if (files.length) onDropFiles(files);
+          },
+          style: { minHeight: 120 },
+        }, <><View style={styles.dropZone}><Text style={styles.dropZoneTitle}>Suelta aquí tus evidencias</Text><Text style={styles.dropZoneCaption}>También puedes usar + Adjuntar para seleccionar archivos</Text></View><EvidenceGallery emptyMessage="Aún no has enviado evidencias para esta tarea." evidences={task.evidencias} taskId={task.id} /></>) : (
+          <EvidenceGallery emptyMessage="Aún no has enviado evidencias para esta tarea." evidences={task.evidencias} taskId={task.id} />
+        )}
 
         {selectedAssets.length ? (
           <View style={styles.selectedEvidence}>
@@ -895,6 +940,24 @@ function toTaskEvidenceAssetFromDocument(
   };
 }
 
+function releaseWebAsset(asset: TaskEvidenceAsset) {
+  if (Platform.OS === 'web' && asset.webFile && asset.uri.startsWith('blob:')) {
+    URL.revokeObjectURL(asset.uri);
+  }
+}
+
+function inferEvidenceMimeType(name: string): string {
+  const extension = name.split('.').pop()?.toLowerCase();
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'png') return 'image/png';
+  if (extension === 'webp') return 'image/webp';
+  if (extension === 'heic') return 'image/heic';
+  if (extension === 'heif') return 'image/heif';
+  if (extension === 'mov') return 'video/quicktime';
+  if (extension === 'mp4') return 'video/mp4';
+  return '';
+}
+
 function parseExifCaptureTime(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const match = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(value);
@@ -978,6 +1041,9 @@ const styles = StyleSheet.create({
   taskList: {
     gap: spacing.medium,
   },
+  dropZone: { alignItems: 'center', backgroundColor: '#FFFAFA', borderColor: '#E9CACA', borderRadius: radius.medium, borderStyle: 'dashed', borderWidth: 1, justifyContent: 'center', marginBottom: spacing.medium, minHeight: 78, padding: spacing.medium },
+  dropZoneTitle: { color: colors.text, fontSize: typography.small, fontWeight: '800' },
+  dropZoneCaption: { color: colors.textMuted, fontSize: typography.overline, marginTop: 4 },
   taskCard: {
     backgroundColor: colors.white,
     borderColor: colors.border,

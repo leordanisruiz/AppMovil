@@ -1,4 +1,5 @@
 import { apiBaseUrl, httpClient } from '../api/httpClient';
+import { Platform } from 'react-native';
 import type {
   AssignableNovelty,
   AssignableOperator,
@@ -105,18 +106,25 @@ export const tareasService = {
   ): Promise<UploadEvidenceResponse> {
     const formData = new FormData() as NativeFormData;
     for (const asset of assets) {
-      formData.append('files', {
-        uri: asset.uri,
-        name: asset.name,
-        type: asset.mimeType,
-      });
+      if (asset.webFile) {
+        (formData as FormData).append('files', asset.webFile, asset.name);
+      } else {
+        formData.append('files', {
+          uri: asset.uri,
+          name: asset.name,
+          type: asset.mimeType,
+        });
+      }
       formData.append('captured_at', asset.capturedAt ?? new Date().toISOString());
     }
 
     const response = await httpClient.post<UploadEvidenceResponse>(
       `/tareas/${taskId}/evidencias`,
       formData,
-      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 600_000 },
+      {
+        headers: Platform.OS === 'web' ? undefined : { 'Content-Type': 'multipart/form-data' },
+        timeout: 600_000,
+      },
     );
     return response.data;
   },
