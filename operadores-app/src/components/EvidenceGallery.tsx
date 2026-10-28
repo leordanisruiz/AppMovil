@@ -92,7 +92,13 @@ function EvidenceCard({
 }) {
   const [hasPreviewError, setHasPreviewError] = useState(false);
   const [isPreviewLoaded, setPreviewLoaded] = useState(false);
-  const { isLoading, uri: previewUri } = useEvidenceSource(taskId, evidence, headers);
+  const [useOriginalPreview, setUseOriginalPreview] = useState(false);
+  const { isLoading, uri: previewUri } = useEvidenceSource(
+    taskId,
+    evidence,
+    headers,
+    !useOriginalPreview,
+  );
   const isImage = evidence.tipo === 'image';
   const showImage = isImage && !hasPreviewError && previewUri !== null;
 
@@ -106,7 +112,14 @@ function EvidenceCard({
       <View style={styles.cardPreview}>
         {showImage ? (
           <Image
-            onError={() => setHasPreviewError(true)}
+            onError={() => {
+              if (!useOriginalPreview) {
+                setPreviewLoaded(false);
+                setUseOriginalPreview(true);
+              } else {
+                setHasPreviewError(true);
+              }
+            }}
             onLoad={() => setPreviewLoaded(true)}
             resizeMode="cover"
             source={{ uri: previewUri, headers }}
@@ -479,6 +492,7 @@ function useEvidenceSource(
   taskId: number,
   evidence: TaskEvidence | null,
   headers: Record<string, string> | undefined,
+  thumbnail = false,
 ): {
   uri: string | null;
   headers?: Record<string, string>;
@@ -508,7 +522,9 @@ function useEvidenceSource(
       setIsLoading(true);
       try {
         const response = await httpClient.get<Blob>(
-          tareasService.evidenceUrl(taskId, evidence.nombre),
+          thumbnail
+            ? tareasService.evidenceThumbnailUrl(taskId, evidence.nombre)
+            : tareasService.evidenceUrl(taskId, evidence.nombre),
           { responseType: 'blob' },
         );
         objectUrl = URL.createObjectURL(response.data);
@@ -516,6 +532,21 @@ function useEvidenceSource(
           setUri(objectUrl);
         }
       } catch (error) {
+        if (thumbnail) {
+          try {
+            const fallbackResponse = await httpClient.get<Blob>(
+              tareasService.evidenceUrl(taskId, evidence.nombre),
+              { responseType: 'blob' },
+            );
+            objectUrl = URL.createObjectURL(fallbackResponse.data);
+            if (isMounted) {
+              setUri(objectUrl);
+            }
+            return;
+          } catch {
+            // Both the optimized thumbnail and original image failed.
+          }
+        }
         console.warn(
           `No fue posible preparar la evidencia ${evidence.nombre} para visualización:`,
           error,
@@ -533,7 +564,7 @@ function useEvidenceSource(
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [evidence, headers, taskId]);
+  }, [evidence, headers, taskId, thumbnail]);
 
   return {
     headers: Platform.OS !== 'web' ? headers : undefined,
@@ -541,7 +572,9 @@ function useEvidenceSource(
     uri: Platform.OS === 'web'
       ? uri
       : evidence
-        ? tareasService.evidenceUrl(taskId, evidence.nombre)
+        ? thumbnail && evidence.tipo === 'image'
+          ? tareasService.evidenceThumbnailUrl(taskId, evidence.nombre)
+          : tareasService.evidenceUrl(taskId, evidence.nombre)
         : null,
   };
 }

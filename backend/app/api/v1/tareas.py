@@ -1,7 +1,10 @@
 import logging
 import mimetypes
 from datetime import datetime
+from hashlib import sha256
+import os
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from fastapi import (
@@ -16,6 +19,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
+from PIL import Image, ImageOps
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -301,6 +305,52 @@ def ver_evidencia(
         path=path,
         media_type=_media_type_for(path.name),
         headers={"Content-Disposition": "inline"},
+    )
+
+
+@router.get(
+    "/{tarea_id}/evidencias/{nombre}/thumbnail",
+    summary="Ver una miniatura optimizada de una evidencia",
+)
+def ver_miniatura_evidencia(
+    tarea_id: int,
+    nombre: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    tipo_documento, identificacion = _authenticated_identity(request)
+    path, _ = tareas_service.get_evidence_path(
+        db,
+        tarea_id=tarea_id,
+        nombre=nombre,
+        tipo_documento=tipo_documento,
+        identificacion=identificacion,
+    )
+    stat = path.stat()
+    cache_key = sha256(
+        f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
+    ).hexdigest()
+    cache_dir = Path(tempfile.gettempdir()) / "appmovil-evidence-thumbnails"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    thumbnail_path = cache_dir / f"{cache_key}.jpg"
+    if not thumbnail_path.is_file():
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f"{cache_key}.", suffix=".tmp", dir=cache_dir
+        )
+        os.close(descriptor)
+        temporary_path = Path(temporary_name)
+        try:
+            with Image.open(path) as opened:
+                image = ImageOps.exif_transpose(opened).convert("RGB")
+            image.thumbnail((480, 480), Image.Resampling.LANCZOS)
+            image.save(temporary_path, format="JPEG", quality=72, optimize=True)
+            os.replace(temporary_path, thumbnail_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+    return FileResponse(
+        path=thumbnail_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400"},
     )
 
 
