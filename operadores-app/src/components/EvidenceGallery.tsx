@@ -43,7 +43,7 @@ export function EvidenceGallery({
   evidences,
   emptyMessage,
 }: EvidenceGalleryProps) {
-  const headers = useEvidenceAuthHeaders();
+  const { headers, headersReady } = useEvidenceAuthHeaders();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   if (!evidences.length) {
@@ -62,6 +62,7 @@ export function EvidenceGallery({
             key={evidence.nombre}
             evidence={evidence}
             headers={headers}
+            headersReady={headersReady}
             onPress={() => setActiveIndex(index)}
             taskId={taskId}
           />
@@ -70,6 +71,7 @@ export function EvidenceGallery({
       <EvidenceViewer
         evidences={evidences}
         headers={headers}
+        headersReady={headersReady}
         index={activeIndex}
         onChangeIndex={setActiveIndex}
         onClose={() => setActiveIndex(null)}
@@ -83,11 +85,13 @@ function EvidenceCard({
   taskId,
   evidence,
   headers,
+  headersReady,
   onPress,
 }: {
   taskId: number;
   evidence: TaskEvidence;
   headers: Record<string, string> | undefined;
+  headersReady: boolean;
   onPress: () => void;
 }) {
   const [hasPreviewError, setHasPreviewError] = useState(false);
@@ -97,6 +101,7 @@ function EvidenceCard({
     taskId,
     evidence,
     headers,
+    headersReady,
     !useOriginalPreview,
   );
   const isImage = evidence.tipo === 'image';
@@ -163,6 +168,7 @@ function EvidenceViewer({
   taskId,
   evidences,
   headers,
+  headersReady,
   index,
   onChangeIndex,
   onClose,
@@ -170,6 +176,7 @@ function EvidenceViewer({
   taskId: number;
   evidences: TaskEvidence[];
   headers: Record<string, string> | undefined;
+  headersReady: boolean;
   index: number | null;
   onChangeIndex: (index: number) => void;
   onClose: () => void;
@@ -195,6 +202,7 @@ function EvidenceViewer({
     taskId,
     index === null ? null : evidences[index],
     headers,
+    headersReady,
   );
 
   if (index === null) return null;
@@ -468,30 +476,39 @@ function EvidenceVideoPlayer({
   );
 }
 
-function useEvidenceAuthHeaders(): Record<string, string> | undefined {
+function useEvidenceAuthHeaders(): {
+  headers: Record<string, string> | undefined;
+  headersReady: boolean;
+} {
   const [headers, setHeaders] = useState<Record<string, string> | undefined>(
     undefined,
   );
+  const [headersReady, setHeadersReady] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
     void tokenStorage.get().then((token) => {
       if (isMounted) {
         setHeaders(token ? { Authorization: `Bearer ${token}` } : undefined);
+        setHeadersReady(true);
       }
+    }).catch((error: unknown) => {
+      console.warn('No fue posible leer la sesión para mostrar evidencias:', error);
+      if (isMounted) setHeadersReady(true);
     });
     return () => {
       isMounted = false;
     };
   }, []);
 
-  return headers;
+  return { headers, headersReady };
 }
 
 function useEvidenceSource(
   taskId: number,
   evidence: TaskEvidence | null,
   headers: Record<string, string> | undefined,
+  headersReady: boolean,
   thumbnail = false,
 ): {
   uri: string | null;
@@ -511,6 +528,12 @@ function useEvidenceSource(
       };
     }
 
+    if (!headersReady) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
     if (Platform.OS !== 'web') {
       return () => {
         isMounted = false;
@@ -525,7 +548,7 @@ function useEvidenceSource(
           thumbnail
             ? tareasService.evidenceThumbnailUrl(taskId, evidence.nombre)
             : tareasService.evidenceUrl(taskId, evidence.nombre),
-          { responseType: 'blob' },
+          { headers, responseType: 'blob' },
         );
         objectUrl = URL.createObjectURL(response.data);
         if (isMounted) {
@@ -536,7 +559,7 @@ function useEvidenceSource(
           try {
             const fallbackResponse = await httpClient.get<Blob>(
               tareasService.evidenceUrl(taskId, evidence.nombre),
-              { responseType: 'blob' },
+              { headers, responseType: 'blob' },
             );
             objectUrl = URL.createObjectURL(fallbackResponse.data);
             if (isMounted) {
@@ -564,14 +587,14 @@ function useEvidenceSource(
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [evidence, headers, taskId, thumbnail]);
+  }, [evidence, headers, headersReady, taskId, thumbnail]);
 
   return {
     headers: Platform.OS !== 'web' ? headers : undefined,
-    isLoading: Platform.OS === 'web' ? isLoading : false,
+    isLoading: !headersReady || (Platform.OS === 'web' && isLoading),
     uri: Platform.OS === 'web'
       ? uri
-      : evidence
+      : headersReady && evidence
         ? thumbnail && evidence.tipo === 'image'
           ? tareasService.evidenceThumbnailUrl(taskId, evidence.nombre)
           : tareasService.evidenceUrl(taskId, evidence.nombre)
