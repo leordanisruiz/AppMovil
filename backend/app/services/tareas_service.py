@@ -1010,9 +1010,10 @@ def _get_operator_evidence_directory(identificacion: str) -> Path:
         )
 
     storage_root = Path(configured_root)
+    normalized_root_name = re.sub(r"[^a-z0-9]", "", storage_root.name.casefold())
     evidence_root = (
         storage_root
-        if storage_root.name.casefold() == "evidenciasappmovil"
+        if normalized_root_name == "evidenciasappmovil"
         else storage_root / "EvidenciasAppMovil"
     )
     return evidence_root / identificacion
