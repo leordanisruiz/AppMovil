@@ -804,6 +804,10 @@ class TareasService:
             operator_identificacion = identificacion
 
         if task is None or operator_identificacion is None:
+            logger.warning(
+                "Evidence request references an unavailable task: task=%s.",
+                tarea_id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="La evidencia no existe.",
@@ -817,6 +821,11 @@ class TareasService:
             None,
         )
         if evidence_record is None:
+            logger.warning(
+                "Evidence metadata is missing: task=%s file=%s.",
+                tarea_id,
+                nombre,
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="La evidencia no existe.",
@@ -832,12 +841,16 @@ class TareasService:
         )
         saved_route = str(evidence_record.get("ruta") or "").strip()
         path: Path | None = None
+        saved_route_resolves = False
+        saved_route_file_exists = False
         if saved_route:
-            route_path = (
-                Path(get_settings().evidencias_path)
-                / saved_route.lstrip("/\\")
-            ).resolve()
-            if route_path.is_relative_to(operator_directory) and route_path.is_file():
+            route_path = _resolve_saved_evidence_path(
+                saved_route,
+                operator_directory=operator_directory,
+            )
+            saved_route_resolves = route_path is not None
+            saved_route_file_exists = bool(route_path and route_path.is_file())
+            if saved_route_file_exists and route_path is not None:
                 path = route_path
 
         legacy_path = (operator_directory / nombre).resolve()
@@ -851,6 +864,20 @@ class TareasService:
             if legacy_path.is_file():
                 path = legacy_path
         if path is None:
+            logger.warning(
+                "Evidence file is missing from configured storage: task=%s "
+                "file=%s saved_route=%s route_resolves=%s route_file_exists=%s "
+                "task_path_exists=%s legacy_path_exists=%s "
+                "storage_root_exists=%s.",
+                tarea_id,
+                nombre,
+                bool(saved_route),
+                saved_route_resolves,
+                saved_route_file_exists,
+                task_path.is_file(),
+                legacy_path.is_file(),
+                operator_directory.parent.is_dir(),
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="La evidencia no existe.",
@@ -982,11 +1009,34 @@ def _get_operator_evidence_directory(identificacion: str) -> Path:
             ),
         )
 
-    return (
-        Path(configured_root)
-        / "EvidenciasAppMovil"
-        / identificacion
+    storage_root = Path(configured_root)
+    evidence_root = (
+        storage_root
+        if storage_root.name.casefold() == "evidenciasappmovil"
+        else storage_root / "EvidenciasAppMovil"
     )
+    return evidence_root / identificacion
+
+
+def _resolve_saved_evidence_path(
+    saved_route: str,
+    *,
+    operator_directory: Path,
+) -> Path | None:
+    """Resolve relative, POSIX, and legacy Windows evidence routes safely."""
+    normalized = saved_route.replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part]
+    for index, part in enumerate(parts):
+        if part.casefold() != "evidenciasappmovil":
+            continue
+        route_parts = parts[index + 1 :]
+        if not route_parts or route_parts[0] != operator_directory.name:
+            return None
+        candidate = (operator_directory / Path(*route_parts[1:])).resolve()
+        return candidate if candidate.is_relative_to(operator_directory) else None
+
+    candidate = Path(saved_route).resolve()
+    return candidate if candidate.is_relative_to(operator_directory) else None
 
 
 def _task_evidence_folder_name(tarea_id: int, novedades_ids: Any) -> str:
