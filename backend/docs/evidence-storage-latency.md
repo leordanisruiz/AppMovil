@@ -30,8 +30,9 @@ persistente entre aperturas.
 
 No pude medir el servidor desde este equipo: el montaje SMB no está accesible,
 WSL está bloqueado y `Suma-Asistencia-wiki-Lnx` no resuelve desde la estación de
-trabajo. No se deben interpretar tiempos de otro host como si fueran medidas del
-servidor de producción.
+trabajo. El operador ejecutó el benchmark en el servidor y compartió los
+resultados siguientes (28/10/2026). No se deben interpretar como lecturas
+frías garantizadas: el estado de caché de SSHFS/kernel no se vació ni se midió.
 
 El script `scripts/benchmark_evidence_storage.py` mide los mismos archivos en
 el servidor Linux. Para cada imagen y video registra:
@@ -45,9 +46,13 @@ el servidor Linux. Para cada imagen y video registra:
 
 La primera lectura tiene estado de caché desconocido; no se vacía la caché del
 kernel porque eso afecta a todo el servidor y requiere privilegios. Las lecturas
-repetidas representan el caso caliente. La copia local recién escrita también
-puede estar en la page cache del kernel. Registrar estas condiciones evita
-presentar una lectura caliente como una medición fría.
+repetidas representan el caso caliente. `findmnt -T /var/tmp` identificó
+`/dev/sda1 ext4`, pero la copia local recién escrita probablemente seguía en la
+page cache del kernel. Por tanto, la relación de velocidad compara SSHFS
+caliente con una copia local caliente y no con una lectura física fría del SSD.
+Con siete muestras, el p95 de rango más cercano corresponde al máximo de la
+muestra; se debe repetir con más archivos y rondas antes de tratarlo como un p95
+estable de producción.
 
 Antes de ejecutar, confirme que la primera ruta es FUSE/SSHFS y la segunda es
 local:
@@ -71,10 +76,41 @@ actuales representativos. El script solo lee los archivos fuente y elimina sus
 copias temporales al terminar. Guarde su JSON junto con la revisión del backend,
 fecha, salida de `findmnt` y estado de carga del servidor.
 
-| Archivo | Tamaño | SSHFS stat mediana / p95 | Local stat mediana / p95 | SSHFS primera lectura | SSHFS caliente mediana / p95 | Local caliente mediana / p95 | Aceleración caliente |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Imagen representativa | Pendiente de ejecutar en Linux | Pendiente | Pendiente | Pendiente | Pendiente | Pendiente | Pendiente |
-| Video representativo | Pendiente de ejecutar en Linux | Pendiente | Pendiente | Pendiente | Pendiente | Pendiente | Pendiente |
+| Archivo | Tamaño | SSHFS: primera lectura | SSHFS: caliente mediana / p95 | Local: caliente mediana / p95 | Aceleración caliente | SSHFS caliente |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| JPG `24ea08ef…jpg` | 1,343,793 B | 345.73 ms | 117.59 / 155.58 ms | 0.78 / 1.15 ms | 150.76× | 10.90 MiB/s |
+| MP4 `1e66b8bc…mp4` | 1,758,347 B | 162.33 ms | 132.46 / 356.14 ms | 1.17 / 1.60 ms | 113.21× | 12.66 MiB/s |
+
+Latencias de primer byte observadas: JPG 10.32 ms en la primera lectura, 7.73
+ms mediana caliente en SSHFS y 0.02 ms local; MP4 10.17 ms primera lectura,
+8.12 ms mediana SSHFS caliente y 0.03 ms local. `stat` inicial SSHFS dio 0.01
+ms; en SSHFS caliente mediana/p95 fue 0.01/0.10 ms para el JPG y 0.01/0.16 ms
+para el MP4. El `stat` local caliente fue 0.01/0.01 ms para ambos. Los tiempos
+SSHFS tan bajos probablemente reflejan caché de atributos y no un viaje SFTP
+independiente por cada llamada.
+
+La copia SSHFS→local tardó 106.76 ms para el JPG y 116.71 ms para el MP4; esas
+cifras incluyen lectura y escritura local y ocurrieron después de la primera
+lectura, por lo que no representan una lectura remota fría.
+
+El `findmnt` compartido muestra dos entradas idénticas para
+`/mnt/evidencias_appmovil`. Esto merece revisión en el host y en el namespace
+del contenedor: puede ser un montaje duplicado/apilado, pero este resultado por
+sí solo no demuestra impacto de rendimiento. No desmontar ninguna entrada sin
+confirmar qué proceso y servicio la utilizan.
+
+### Impacto medido sobre la visualización
+
+Para estos archivos, leer el original por SSHFS costó alrededor de 0.12–0.35 s
+en las muestras observadas; la variabilidad del MP4 llegó a 0.36 s en siete
+lecturas. Una copia local caliente leyó ambos en alrededor de 1 ms. Esto
+confirma que SSHFS añade latencia material a las lecturas, aunque estos archivos
+pequeños por sí solos no explican una espera infinita o una pantalla negra: ese
+comportamiento requiere además revisar errores HTTP/CORS, transferencia hacia
+el dispositivo, decodificación y eventos de carga de la UI. Los tiempos no
+incluyen consulta PostgreSQL, generación de miniatura, transferencia móvil ni
+renderizado. Tampoco permiten extrapolar linealmente a seis imágenes
+concurrentes.
 
 ## Impacto y estrategia recomendada
 
@@ -103,8 +139,10 @@ fecha, salida de `findmnt` y estado de carga del servidor.
    permite saber si el mayor retraso está en PostgreSQL, SSHFS, decodificación
    o red hacia el dispositivo.
 
-Esperamos que persistir las miniaturas reduzca a cero las lecturas de contenido
-SSHFS de la cuadrícula después del primer llenado; seguirían las consultas de
-metadatos necesarias para autorizar y validar la ruta. Generarlas en la subida
-puede evitar también esa primera lectura de contenido adicional. No asigno
-porcentajes de reducción de tiempo hasta obtener las mediciones de la tabla.
+La comparación observada da una mejora de 113–151× para lecturas repetidas
+desde caché local caliente frente a SSHFS caliente en estos dos archivos. No es
+una promesa de mejora de tiempo de pantalla: hay otros tramos y el estado de
+caché de disco no se controló. Persistir las miniaturas en disco local evitaría
+leer sus bytes desde SSHFS en los cache hits; generar miniaturas al subir puede
+evitar también la lectura remota de contenido en el primer llenado. Seguirían
+las consultas de metadatos necesarias para autorizar y validar la ruta.
