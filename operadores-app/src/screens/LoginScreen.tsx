@@ -99,8 +99,9 @@ export function LoginScreen({ navigation }: LoginScreenProps) {
               <LoginField
                 icon="lock"
                 inputRef={passwordInputRef}
+                keyboardType="number-pad"
                 label=""
-                onChangeText={setPassword}
+                onChangeText={(value) => setPassword(value.replace(/\D/g, ''))}
                 onSubmitEditing={handleLogin}
                 placeholder="Ingresa tu contraseña"
                 returnKeyType="done"

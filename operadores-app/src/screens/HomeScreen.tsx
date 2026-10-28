@@ -72,7 +72,7 @@ const menuItems: {
     description: 'Crear actividades para operadores',
     icon: '＋',
   },
-  { label: 'Mis datos', value: 'mis-datos', description: 'Perfil del operador' },
+  { label: 'Mis datos', value: 'mis-datos', description: 'Perfil del Usuario' },
 ];
 
 const sectionTitles: Record<PortalSection, string> = {
