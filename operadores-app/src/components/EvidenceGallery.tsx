@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEvent } from 'expo';
 import { StatusBar } from 'expo-status-bar';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -61,8 +62,7 @@ export function EvidenceGallery({
   useEffect(() => {
     if (!headersReady || !headers) return;
     const initialThumbnails = evidences
-      .filter((evidence) => evidence.tipo === 'image')
-      .slice(0, 2)
+      .slice(0, 4)
       .map((evidence) => tareasService.evidenceThumbnailUrl(evidence.taskId ?? taskId, evidence.nombre));
     const prefetchImages = Image.prefetch;
     if (initialThumbnails.length && typeof prefetchImages === 'function') {
@@ -94,10 +94,7 @@ export function EvidenceGallery({
             evidence={evidence}
             headers={headers}
             headersReady={headersReady}
-            shouldLoadPreview={
-              evidence.tipo === 'image' &&
-              evidences.slice(0, index + 1).filter((item) => item.tipo === 'image').length <= previewLimit
-            }
+            shouldLoadPreview={evidences.slice(0, index + 1).length <= previewLimit}
             onPreviewSettled={() => setPreviewLimit((current) => current + 1)}
             onPress={() => setActiveIndex(index)}
             taskId={evidence.taskId ?? taskId}
@@ -149,7 +146,7 @@ function EvidenceCard({
     shouldLoadPreview,
   );
   const isImage = evidence.tipo === 'image';
-  const showImage = isImage && !hasPreviewError && previewUri !== null;
+  const showThumbnail = !hasPreviewError && previewUri !== null;
 
   return (
     <Pressable
@@ -159,7 +156,7 @@ function EvidenceCard({
       style={({ pressed }) => [styles.card, { width: cardWidth }, pressed && styles.cardPressed]}
     >
       <View style={styles.cardPreview}>
-        {showImage ? (
+        {showThumbnail ? (
           <Image
             cachePolicy="memory-disk"
             contentFit="cover"
@@ -171,10 +168,10 @@ function EvidenceCard({
               setPreviewLoaded(true);
               onPreviewSettled();
             }}
-            source={{ uri: previewUri, headers, cacheKey: evidence.nombre }}
+            source={{ uri: previewUri, headers, cacheKey: `${taskId}:${evidence.nombre}:thumbnail` }}
             style={styles.cardImage}
           />
-        ) : isImage && (isLoading || !shouldLoadPreview) ? (
+        ) : (isLoading || !shouldLoadPreview) ? (
           <View style={styles.cardLoadingState}>
             <ActivityIndicator color={colors.white} />
             <Text style={styles.cardLoadingText}>Cargando...</Text>
@@ -191,7 +188,7 @@ function EvidenceCard({
             </Text>
           </View>
         )}
-        {showImage && !isPreviewLoaded ? (
+        {showThumbnail && !isPreviewLoaded ? (
           <View style={styles.cardLoadingOverlay} pointerEvents="none">
             <ActivityIndicator color={colors.white} />
           </View>
@@ -206,7 +203,7 @@ function EvidenceCard({
         {getEvidenceDisplayName(evidence.nombre)}
       </Text>
       <Text style={styles.cardMeta}>
-        {isImage ? 'Imagen' : 'Video'} · {formatEvidenceDate(evidence.fecha)}
+        {isImage ? 'Imagen' : `Video${evidence.duracion_segundos ? ` · ${formatDuration(evidence.duracion_segundos)}` : ''}`} · {formatEvidenceDate(evidence.fecha)}
       </Text>
       {evidence.taskLabel ? (
         <View style={styles.taskContext}>
@@ -345,9 +342,11 @@ function EvidenceViewer({
             />
           ) : (
             <EvidenceVideoPlayer
+              key={evidence.nombre}
               headers={sourceHeaders ?? headers}
               height={stageHeight}
               isLoading={isLoading}
+              posterUri={tareasService.evidenceThumbnailUrl(evidenceTaskId, evidence.nombre)}
               uri={sourceUri}
               width={mediaWidth}
             />
@@ -385,7 +384,7 @@ function EvidenceViewer({
             {displayName}
           </Text>
           <Text style={styles.viewerMeta}>
-            {isImage ? 'Imagen' : 'Video'} · Cargada el{' '}
+            {isImage ? 'Imagen' : `Video${evidence.duracion_segundos ? ` · ${formatDuration(evidence.duracion_segundos)}` : ''}`} · Cargada el{' '}
             {formatEvidenceDate(evidence.fecha)}
           </Text>
           {evidence.taskLabel ? <Text style={styles.viewerTaskContext}>{evidence.taskLabel}{evidence.taskDescription ? ` · ${evidence.taskDescription}` : ''}</Text> : null}
@@ -612,38 +611,54 @@ function ZoomableImage({
 
 function EvidenceVideoPlayer({
   uri,
+  posterUri,
   headers,
   isLoading,
   width,
   height,
 }: {
   uri: string | null;
+  posterUri: string;
   headers: Record<string, string> | undefined;
   isLoading: boolean;
   width: number;
   height: number;
 }) {
-  const player = useVideoPlayer(uri ? { headers, uri } : null, (instance) => {
+  const player = useVideoPlayer(uri ? {
+    headers: Platform.OS === 'web' ? undefined : headers,
+    uri,
+    ...(Platform.OS !== 'web' ? { useCaching: true } : {}),
+  } : null, (instance) => {
     instance.loop = false;
   });
+  const { status, error } = useEvent(player, 'statusChange', { status: player.status });
+  const sourceLoad = useEvent(player, 'sourceLoad', null);
+  const sourceDuration = sourceLoad?.duration ?? player.duration;
+  const [firstFrameRendered, setFirstFrameRendered] = useState(false);
 
-  if (isLoading || !uri) {
+  if (!uri) {
     return (
       <View style={[styles.loadingStage, { height, width }]}>
         <ActivityIndicator color={colors.white} />
-        <Text style={styles.loadingStageText}>Cargando video...</Text>
+        <Text style={styles.loadingStageText}>{isLoading ? 'Cargando video...' : 'Video no disponible'}</Text>
       </View>
     );
   }
 
   return (
-    <VideoView
-      contentFit="contain"
-      fullscreenOptions={{ enable: true }}
-      nativeControls
-      player={player}
-      style={{ height, width }}
-    />
+    <View style={{ height, width }}>
+      {!firstFrameRendered ? <Image cachePolicy="memory-disk" contentFit="contain" source={{ uri: posterUri, headers }} style={[StyleSheet.absoluteFill, { height, width }]} /> : null}
+      <VideoView
+        contentFit="contain"
+        fullscreenOptions={{ enable: true }}
+        nativeControls
+        onFirstFrameRender={() => setFirstFrameRendered(true)}
+        player={player}
+        style={{ height, width }}
+      />
+      {Number.isFinite(sourceDuration) && sourceDuration > 0 ? <View style={styles.videoDurationBadge}><Text style={styles.videoDurationText}>{formatDuration(sourceDuration)}</Text></View> : null}
+      {!firstFrameRendered || status === 'loading' ? <View style={styles.videoLoadingOverlay} pointerEvents="none"><ActivityIndicator color={colors.white} /><Text style={styles.loadingStageText}>{status === 'error' ? error?.message ?? 'No fue posible cargar el video.' : 'Cargando video...'}</Text></View> : null}
+    </View>
   );
 }
 
@@ -709,12 +724,6 @@ function useEvidenceSource(
       };
     }
 
-    if (thumbnail && evidence.tipo !== 'image') {
-      return () => {
-        isMounted = false;
-      };
-    }
-
     if (evidence.tipo === 'image') {
       return () => {
         isMounted = false;
@@ -731,15 +740,25 @@ function useEvidenceSource(
       setUri(null);
       setIsLoading(true);
       setHasError(false);
-      setHasError(false);
       try {
-        const response = await httpClient.get<Blob>(
-          getEvidenceSourceUrl(taskId, evidence, thumbnail),
-          { headers, responseType: 'blob' },
-        );
-        objectUrl = URL.createObjectURL(response.data);
-        if (isMounted) {
-          setUri(objectUrl);
+        if (evidence.tipo === 'video' && !thumbnail) {
+          const response = await httpClient.post<{ token: string }>(
+            tareasService.evidenceStreamTokenUrl(taskId, evidence.nombre),
+            {},
+            { headers },
+          );
+          if (isMounted) {
+            setUri(tareasService.evidenceStreamPlaybackUrl(response.data.token));
+          }
+        } else {
+          const response = await httpClient.get<Blob>(
+            getEvidenceSourceUrl(taskId, evidence, thumbnail),
+            { headers, responseType: 'blob' },
+          );
+          objectUrl = URL.createObjectURL(response.data);
+          if (isMounted) {
+            setUri(objectUrl);
+          }
         }
       } catch (error) {
         if (thumbnail) {
@@ -780,13 +799,13 @@ function useEvidenceSource(
   return {
     headers,
     isLoading: !headersReady || (
-      Platform.OS === 'web' && !thumbnail && evidence?.tipo === 'video' && isLoading
+      Platform.OS === 'web' && evidence?.tipo === 'video' && isLoading
     ),
-    hasError: !thumbnail && evidence?.tipo === 'video' ? hasError : false,
+    hasError: evidence?.tipo === 'video' ? hasError : false,
     uri: !enabled || !headersReady || !evidence
       ? null
-      : thumbnail && evidence.tipo !== 'image'
-        ? null
+      : thumbnail
+        ? getEvidenceSourceUrl(taskId, evidence, true)
         : evidence.tipo === 'image'
           ? getEvidenceSourceUrl(taskId, evidence, thumbnail)
           : Platform.OS !== 'web'
@@ -800,7 +819,7 @@ function getEvidenceSourceUrl(
   evidence: TaskEvidence,
   thumbnail: boolean,
 ): string {
-  if (thumbnail && evidence.tipo === 'image') {
+  if (thumbnail) {
     return tareasService.evidenceThumbnailUrl(taskId, evidence.nombre);
   }
   if (evidence.tipo === 'image') {
@@ -940,6 +959,11 @@ function formatEvidenceDate(value: string): string {
     month: 'short',
     year: 'numeric',
   }).format(date);
+}
+
+function formatDuration(seconds: number): string {
+  const wholeSeconds = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(wholeSeconds / 60)}:${String(wholeSeconds % 60).padStart(2, '0')}`;
 }
 
 const styles = StyleSheet.create({
@@ -1108,6 +1132,9 @@ const styles = StyleSheet.create({
     color: colors.whiteMuted,
     fontSize: typography.small,
   },
+  videoLoadingOverlay: { alignItems: 'center', backgroundColor: 'rgba(12, 10, 10, 0.35)', bottom: 0, gap: spacing.small, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0, zIndex: 2 },
+  videoDurationBadge: { backgroundColor: 'rgba(0, 0, 0, 0.68)', borderRadius: radius.small, bottom: 12, paddingHorizontal: 8, paddingVertical: 5, position: 'absolute', right: 12, zIndex: 4 },
+  videoDurationText: { color: colors.white, fontSize: typography.overline, fontWeight: '800' },
   imageStatusOverlay: {
     alignItems: 'center',
     backgroundColor: 'rgba(12, 10, 10, 0.78)',

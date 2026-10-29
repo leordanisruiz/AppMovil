@@ -36,7 +36,9 @@ if (typeof Notifications.setNotificationHandler === 'function') {
     handleNotification: async (notification) => {
       const data = notification.request.content.data;
       const isForegroundFallback =
-        data?.source === 'foreground-poll' || data?.tipo === 'tarea';
+        data?.source === 'foreground-poll' ||
+        data?.tipo === 'tarea' ||
+        data?.tipo === 'novedad';
       const shouldPresent =
         AppState.currentState !== 'active' || isForegroundFallback;
 
@@ -100,23 +102,6 @@ export async function getExpoPushToken(): Promise<string | null> {
 
   const pushToken = await Notifications.getExpoPushTokenAsync({ projectId });
   return pushToken.data;
-}
-
-export async function showNewNoveltyNotification(
-  newNoveltyCount: number,
-): Promise<void> {
-  if (newNoveltyCount < 1) return;
-  if (typeof Notifications.scheduleNotificationAsync !== 'function') return;
-
-  const noun = newNoveltyCount === 1 ? 'novedad nueva' : 'novedades nuevas';
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: 'Nuevas novedades',
-      body: `Tienes ${newNoveltyCount} ${noun}. Por favor revisa para que realices el trámite de cierre.`,
-      data: { source: 'foreground-poll' },
-    },
-    trigger: null,
-  });
 }
 
 export function subscribeToNoveltyNavigation(

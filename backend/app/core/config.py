@@ -31,7 +31,11 @@ class Settings:
     evidence_cache_path: str = "/var/cache/appmovil"
     evidence_thumbnail_cache_max_bytes: int = 536870912
     evidence_media_cache_max_bytes: int = 2147483648
+    evidence_original_cache_max_bytes: int = 1610612736
+    evidence_video_cache_max_bytes: int = 536870912
     evidence_video_cache_max_file_bytes: int = 16777216
+    evidence_cache_expiry_seconds: int = 604800
+    evidence_cache_cleanup_interval_seconds: int = 3600
 
 
 @lru_cache
@@ -83,8 +87,26 @@ def get_settings() -> Settings:
         evidence_media_cache_max_bytes=int(
             os.getenv("EVIDENCE_MEDIA_CACHE_MAX_BYTES", str(2 * 1024 * 1024 * 1024))
         ),
+        evidence_original_cache_max_bytes=int(
+            os.getenv(
+                "EVIDENCE_ORIGINAL_CACHE_MAX_BYTES",
+                os.getenv("EVIDENCE_MEDIA_CACHE_MAX_BYTES", str(1536 * 1024 * 1024)),
+            )
+        ),
+        evidence_video_cache_max_bytes=int(
+            os.getenv(
+                "EVIDENCE_VIDEO_CACHE_MAX_BYTES",
+                os.getenv("EVIDENCE_MEDIA_CACHE_MAX_BYTES", str(512 * 1024 * 1024)),
+            )
+        ),
         evidence_video_cache_max_file_bytes=int(
             os.getenv("EVIDENCE_VIDEO_CACHE_MAX_FILE_BYTES", str(16 * 1024 * 1024))
+        ),
+        evidence_cache_expiry_seconds=int(
+            os.getenv("EVIDENCE_CACHE_EXPIRY_SECONDS", str(7 * 24 * 60 * 60))
+        ),
+        evidence_cache_cleanup_interval_seconds=int(
+            os.getenv("EVIDENCE_CACHE_CLEANUP_INTERVAL_SECONDS", "3600")
         ),
     )
 

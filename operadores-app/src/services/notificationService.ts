@@ -21,19 +21,6 @@ export async function getExpoPushToken(): Promise<string | null> {
   return notifications.getExpoPushToken();
 }
 
-export async function showNewNoveltyNotification(
-  newNoveltyCount: number,
-): Promise<void> {
-  if (
-    Platform.OS === 'web' ||
-    !areNativeNotificationsAvailable() ||
-    newNoveltyCount < 1
-  ) return;
-
-  const notifications = await import('./notificationService.native');
-  await notifications.showNewNoveltyNotification(newNoveltyCount);
-}
-
 export async function syncAppBadge(pendingCount: number): Promise<void> {
   if (Platform.OS === 'web' || !areNativeNotificationsAvailable()) return;
 

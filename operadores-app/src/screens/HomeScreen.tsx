@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { isAxiosError } from 'axios';
 import Constants from 'expo-constants';
@@ -27,7 +27,6 @@ import { useTareas } from '../hooks/useTareas';
 import { useTareasResumen } from '../hooks/useTareasResumen';
 import { useTareasCreadas } from '../hooks/useTareasCreadas';
 import {
-  showNewNoveltyNotification,
   subscribeToNoveltyNavigation,
   syncAppBadge,
 } from '../services/notificationService';
@@ -143,10 +142,6 @@ export function HomeScreen() {
       }),
     [activeSection, isMenuOpen, navigation],
   );
-  const noveltySnapshot = useRef<{
-    operatorCode: string;
-    ids: Set<number>;
-  } | null>(null);
   const firstName = operator?.nombreCompleto
     ? getFirstName(operator.nombreCompleto)
     : 'Operador';
@@ -213,38 +208,6 @@ export function HomeScreen() {
       });
     return undefined;
   }, [canRegisterPush, expireSession]);
-
-
-  useEffect(() => {
-    if (!operatorCode || !novedades) return;
-
-    const currentIds = new Set(
-      novedades.novedades.map((novedad) => novedad.IdNovedad),
-    );
-    const snapshot = noveltySnapshot.current;
-
-    if (!snapshot || snapshot.operatorCode !== operatorCode) {
-      noveltySnapshot.current = { operatorCode, ids: currentIds };
-      return;
-    }
-
-    const newNoveltyCount = novedades.novedades.filter(
-      (novedad) => !snapshot.ids.has(novedad.IdNovedad),
-    ).length;
-
-    noveltySnapshot.current = {
-      operatorCode,
-      ids: new Set([...snapshot.ids, ...currentIds]),
-    };
-
-    if (newNoveltyCount > 0) {
-      void showNewNoveltyNotification(newNoveltyCount).catch(
-        (error: unknown) => {
-          console.error('No se pudo mostrar el aviso de nuevas novedades:', error);
-        },
-      );
-    }
-  }, [novedades, operatorCode]);
 
 
   useEffect(() => {

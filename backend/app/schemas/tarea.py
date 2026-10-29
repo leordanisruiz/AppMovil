@@ -16,6 +16,7 @@ class Evidencia(BaseModel):
     fecha: date
     tipo: EvidenceType = "image"
     fecha_captura: datetime | None = None
+    duracion_segundos: float | None = Field(default=None, ge=0)
 
 
 class TareaResponse(BaseModel):

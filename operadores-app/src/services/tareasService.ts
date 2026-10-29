@@ -155,4 +155,12 @@ export const tareasService = {
   evidenceDownloadUrl(taskId: number, nombre: string): string {
     return `${apiBaseUrl}/tareas/${taskId}/evidencias/${encodeURIComponent(nombre)}/download`;
   },
+
+  evidenceStreamTokenUrl(taskId: number, nombre: string): string {
+    return `${apiBaseUrl}/tareas/${taskId}/evidencias/${encodeURIComponent(nombre)}/stream-token`;
+  },
+
+  evidenceStreamPlaybackUrl(token: string): string {
+    return `${apiBaseUrl}/tareas/video-stream/${encodeURIComponent(token)}`;
+  },
 };

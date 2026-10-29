@@ -1,3 +1,4 @@
+import json
 import logging
 import mimetypes
 import os
@@ -7,6 +8,7 @@ import tempfile
 from collections.abc import Mapping
 from datetime import date, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any, NoReturn
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -532,6 +534,7 @@ class TareasService:
             evidence_directory.mkdir(parents=True, exist_ok=True)
             for index, upload in enumerate(files):
                 suffix, content_type, media_type = _validate_upload(upload)
+                video_duration_seconds: float | None = None
                 original_name = Path(upload.filename or f"evidencia{suffix}").name
                 safe_name = re.sub(r"[^\w.-]", "_", original_name)[:80]
                 filename = f"{uuid4().hex[:8]}_{safe_name or f'evidencia{suffix}'}"
@@ -540,7 +543,7 @@ class TareasService:
                 file_size = _write_upload(upload, temporary_path)
                 _verify_file_signature(temporary_path, content_type)
                 if media_type == "video":
-                    _verify_video_duration(temporary_path)
+                    video_duration_seconds = _verify_video_duration(temporary_path)
                 total_bytes += file_size
                 if total_bytes > MAX_EVIDENCE_SIZE_BYTES:
                     raise HTTPException(
@@ -561,15 +564,30 @@ class TareasService:
                 try:
                     if media_type == "image":
                         def cache_thumbnail(image: Any) -> None:
+                            thumbnail_started = perf_counter()
                             try:
-                                get_evidence_cache().store_thumbnail_from_image(
+                                thumbnail_result = get_evidence_cache().store_thumbnail_from_image(
                                     final_path, image
+                                )
+                                logger.info(
+                                    json.dumps(
+                                        {
+                                            "event": "evidence_thumbnail_generated",
+                                            "kind": "image",
+                                            "cache_status": thumbnail_result.cache_status,
+                                            "file": final_filename,
+                                            "size_bytes": thumbnail_result.size_bytes,
+                                            "generation_ms": round(
+                                                (perf_counter() - thumbnail_started) * 1000, 2
+                                            ),
+                                        },
+                                        separators=(",", ":"),
+                                    )
                                 )
                             except (OSError, ValueError):
                                 logger.warning(
                                     "Could not pre-generate evidence thumbnail: task=%s file=%s.",
-                                    tarea_id,
-                                    final_filename,
+                                    tarea_id, final_filename,
                                     exc_info=True,
                                 )
 
@@ -581,6 +599,26 @@ class TareasService:
                         )
                     else:
                         watermark_video(temporary_path, final_path, watermark_time)
+                        poster_started = perf_counter()
+                        try:
+                            poster_result = get_evidence_cache().store_video_thumbnail(final_path)
+                            logger.info(json.dumps({
+                                "event": "evidence_thumbnail_generated",
+                                "kind": "video",
+                                "cache_status": poster_result.cache_status,
+                                "source": "upload-local",
+                                "file": final_filename,
+                                "duration_seconds": video_duration_seconds,
+                                "size_bytes": poster_result.size_bytes,
+                                "generation_ms": round((perf_counter() - poster_started) * 1000, 2),
+                            }, separators=(",", ":")))
+                        except (OSError, ValueError, subprocess.SubprocessError) as poster_error:
+                            logger.warning(
+                                "Could not pre-generate video evidence thumbnail: task=%s file=%s error=%s.",
+                                tarea_id,
+                                final_filename,
+                                type(poster_error).__name__,
+                            )
                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
                     diagnostic = getattr(exc, "stderr", None)
                     if isinstance(diagnostic, bytes):
@@ -608,6 +646,11 @@ class TareasService:
                         "fecha": date.today().isoformat(),
                         "fecha_captura": watermark_time.isoformat(),
                         "tipo": media_type,
+                        **(
+                            {"duracion_segundos": round(video_duration_seconds, 2)}
+                            if video_duration_seconds is not None
+                            else {}
+                        ),
                     }
                 )
 
@@ -1175,7 +1218,7 @@ def _verify_file_signature(path: Path, media_type: str) -> None:
         )
 
 
-def _verify_video_duration(path: Path) -> None:
+def _verify_video_duration(path: Path) -> float:
     duration_seconds: float | None = None
     try:
         probe = subprocess.run(
@@ -1202,6 +1245,7 @@ def _verify_video_duration(path: Path) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Los videos deben durar máximo 3 minutos.",
         )
+    return duration_seconds
 
 
 def _read_iso_bmff_duration_seconds(path: Path) -> float | None:

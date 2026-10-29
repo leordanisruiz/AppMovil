@@ -11,6 +11,7 @@ export type TaskEvidence = {
   fecha: string;
   tipo: TaskEvidenceType;
   fecha_captura?: string | null;
+  duracion_segundos?: number | null;
 };
 
 export type OperatorTask = {

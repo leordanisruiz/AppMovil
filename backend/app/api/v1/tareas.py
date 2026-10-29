@@ -1,3 +1,4 @@
+import json
 import logging
 import mimetypes
 from datetime import datetime
@@ -310,6 +311,83 @@ def ver_evidencia(
     )
 
 
+@router.post(
+    "/{tarea_id}/evidencias/{nombre}/stream-token",
+    summary="Crear una URL temporal de streaming para un video web",
+)
+def crear_token_stream_video(
+    tarea_id: int,
+    nombre: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    document_type, identification = _authenticated_identity(request)
+    path, _ = tareas_service.get_evidence_path(
+        db,
+        tarea_id=tarea_id,
+        nombre=nombre,
+        tipo_documento=document_type,
+        identificacion=identification,
+    )
+    if path.suffix.lower() not in {".mp4", ".mov"}:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="El streaming temporal solo está disponible para videos.",
+        )
+    token = get_evidence_cache().issue_video_stream_grant(
+        task_id=tarea_id,
+        filename=path.name,
+        document_type=document_type,
+        identification=identification,
+    )
+    return {"token": token}
+
+
+@router.get(
+    "/video-stream/{token}",
+    summary="Transmitir un video con URL temporal y soporte Range",
+)
+def transmitir_video_temporal(
+    token: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    started = perf_counter()
+    grant = get_evidence_cache().get_video_stream_grant(token)
+    if grant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La URL temporal de video venció o no existe.",
+        )
+    task_id = int(grant["task_id"])
+    path, _ = tareas_service.get_evidence_path(
+        db,
+        tarea_id=task_id,
+        nombre=str(grant["filename"]),
+        tipo_documento=str(grant["document_type"]),
+        identificacion=str(grant["identification"]),
+    )
+    if path.suffix.lower() not in {".mp4", ".mov"}:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="El recurso no es un video.")
+    cached = _cached_evidence(path)
+    logger.info(
+        json.dumps(
+            {
+                "event": "evidence_video_stream_grant_used",
+                "task_id": task_id,
+                "cache_status": cached.cache_status,
+            },
+            separators=(",", ":"),
+        )
+    )
+    return _evidence_response(
+        cached,
+        started=started,
+        media_type=_media_type_for(path.name),
+        headers={"Cache-Control": "private, max-age=0, no-cache", "Content-Disposition": "inline"},
+    )
+
+
 @router.get(
     "/{tarea_id}/evidencias/{nombre}/thumbnail",
     summary="Ver una miniatura optimizada de una evidencia",
@@ -437,20 +515,25 @@ def _evidence_response(
         local_stream_ms = stream_ms if result.response_source == "local-cache" else 0.0
         sshfs_stream_ms = stream_ms if result.response_source == "sshfs" else 0.0
         logger.info(
-            "Evidence response metrics: kind=%s cache=%s source=%s file_bytes=%s "
-            "sshfs_read_ms=%.2f sshfs_stream_ms=%.2f local_read_ms=%.2f local_stream_ms=%.2f "
-            "cache_write_ms=%.2f prepare_ms=%.2f total_response_ms=%.2f",
-            result.kind,
-            result.cache_status,
-            result.response_source,
-            result.size_bytes,
-            result.source_read_ms,
-            sshfs_stream_ms,
-            result.local_read_ms,
-            local_stream_ms,
-            result.cache_write_ms,
-            prepared_ms,
-            total_ms,
+            json.dumps(
+                {
+                    "event": "evidence_response",
+                    "kind": result.kind,
+                    "cache_status": result.cache_status,
+                    "cache_hit": result.cache_status == "hit",
+                    "cache_miss": result.cache_status == "miss",
+                    "source": result.response_source,
+                    "file_bytes": result.size_bytes,
+                    "sshfs_read_ms": round(result.source_read_ms, 2),
+                    "sshfs_stream_ms": round(sshfs_stream_ms, 2),
+                    "local_read_ms": round(result.local_read_ms, 2),
+                    "local_stream_ms": round(local_stream_ms, 2),
+                    "cache_write_ms": round(result.cache_write_ms, 2),
+                    "prepare_ms": round(prepared_ms, 2),
+                    "total_response_ms": round(total_ms, 2),
+                },
+                separators=(",", ":"),
+            )
         )
 
     return FileResponse(

@@ -14,17 +14,14 @@ Hallazgos en el código:
 | --- | --- | --- |
 | Resolver evidencia | Metadatos del archivo | `get_evidence_path` comprueba la existencia de la ruta guardada y, como respaldo, las rutas organizadas y antiguas. |
 | Primera miniatura | Sí, archivo original | La API abre y decodifica la imagen, reduce a 480 × 480 y guarda un JPEG. |
-| Miniaturas posteriores | No para el contenido, si hay cache hit | Los bytes de la miniatura se sirven desde `/tmp/appmovil-evidence-thumbnails` dentro del contenedor. La resolución/validación de ruta y el fingerprint todavía consultan metadatos SSHFS. |
-| Abrir imagen completa | Sí, en cada lectura de origen | `FileResponse` entrega el archivo original; el caché temporal del backend no sirve este camino. |
-| Reproducir video | Sí, por rangos | La respuesta admite `206 Partial Content`; cada solicitud de rango puede leer el montaje. |
+| Miniaturas posteriores | No para el contenido, si hay cache hit | Los bytes se sirven desde `/var/cache/appmovil/evidence-thumbnails`, en el volumen persistente. La resolución/validación de ruta y el fingerprint todavía consultan metadatos SSHFS. |
+| Abrir imagen completa | Primera lectura SSHFS; siguientes locales | Read-through hacia `/var/cache/appmovil/evidence-originals`, invalidado por ruta, tamaño y `mtime_ns`. |
+| Reproducir video | Range desde la fuente o desde caché local si es pequeño | `FileResponse` conserva `206 Partial Content`; videos que exceden los límites permanecen en SSHFS. |
 
-La caché de miniaturas ya existente evita la mayoría de lecturas repetidas para
-la cuadrícula mientras sobreviva el contenedor. Está en `/tmp`, no en un volumen
-persistente: se pierde cuando se reemplaza/recrea el contenedor. Además, una
-miniatura fría requiere leer y decodificar el original remoto. El visor de imagen
-completa y la reproducción de video siguen leyendo el SSHFS. La app web crea
-URLs Blob para mostrar imágenes, por lo que el objeto Blob no es una caché local
-persistente entre aperturas.
+Las miniaturas, originales y videos ahora viven en directorios separados dentro
+de un volumen de Docker persistente. Las nuevas cargas precalientan miniaturas
+de imágenes y generan una portada JPEG y duración para los videos. Los archivos
+antiguos pueden generar su portada en el primer acceso.
 
 ## Medición
 
@@ -151,23 +148,26 @@ las consultas de metadatos necesarias para autorizar y validar la ruta.
 
 La arquitectura descrita arriba ya está conectada al backend y la app:
 
-- `app/services/evidence_cache.py` mantiene miniaturas en
-  `/var/cache/appmovil/evidence-thumbnails` y media en
-  `/var/cache/appmovil/evidence-media`. Compose monta el volumen persistente
-  `evidence-cache:/var/cache/appmovil` en el servicio `api`.
-- Las claves combinan ruta canónica, tamaño y `mtime_ns`; el llenado es atómico
-  y los archivos menos usados se eliminan cuando la caché llega al límite.
-- El límite de miniaturas es 512 MiB; originales y videos comparten 2 GiB. Solo
-  se cachean completos videos de hasta 16 MiB. Se puede configurar con
-  `EVIDENCE_THUMBNAIL_CACHE_MAX_BYTES`, `EVIDENCE_MEDIA_CACHE_MAX_BYTES` y
-  `EVIDENCE_VIDEO_CACHE_MAX_FILE_BYTES`.
-- `upload_evidence()` prepara el temporal de subida en disco local y crea la
-  miniatura desde la imagen marcada que ya está decodificada. Evidencias
-  antiguas se miniaturizan una vez bajo demanda y luego la miniatura persiste.
+- `app/services/evidence_cache.py` guarda miniaturas, originales y videos en
+  `/var/cache/appmovil/evidence-thumbnails`, `/var/cache/appmovil/evidence-originals`
+  y `/var/cache/appmovil/evidence-videos`. Compose monta el volumen persistente
+  `appmovil-evidence-cache:/var/cache/appmovil` en `api`.
+- Las claves combinan ruta canónica, tamaño y `mtime_ns`; el llenado es atómico.
+  Un limpiador periódico elimina archivos por expiración y LRU, respetando
+  límites separados para cada categoría.
+- Valores por defecto: miniaturas 512 MiB, originales 1.5 GiB, videos 512 MiB,
+  máximo 16 MiB por video cacheado y expiración a 7 días. Las variables son
+  `EVIDENCE_THUMBNAIL_CACHE_MAX_BYTES`, `EVIDENCE_ORIGINAL_CACHE_MAX_BYTES`,
+  `EVIDENCE_VIDEO_CACHE_MAX_BYTES`, `EVIDENCE_VIDEO_CACHE_MAX_FILE_BYTES` y
+  `EVIDENCE_CACHE_EXPIRY_SECONDS`.
+- `upload_evidence()` prepara el temporal en disco local y crea la miniatura de
+  imagen desde la versión marcada ya decodificada. Para videos genera una
+  portada del primer cuadro y guarda su duración. Los archivos antiguos generan
+  una miniatura bajo demanda que luego queda persistida.
 - Las rutas autenticadas de miniatura, vista y descarga usan caché. Videos
   pequeños se copian completos antes de servir; los mayores permanecen en SSHFS.
   `FileResponse` conserva Range para ambos caminos.
-- Cada respuesta emite `Evidence response metrics` con hit/miss/bypass, fuente,
+- Cada respuesta emite un evento JSON `evidence_response` con hit/miss/bypass, fuente,
   bytes, lectura SSHFS/local, escritura, preparación y duración total.
   `local_stream_ms` y `sshfs_stream_ms` incluyen la transferencia al cliente; no
   son tiempos puros de disco. `file_bytes` es el tamaño del archivo, también en
@@ -176,6 +176,17 @@ La arquitectura descrita arriba ya está conectada al backend y la app:
   precarga inicial, skeleton y carga progresiva. La cuadrícula solo solicita
   miniaturas; el original se solicita al abrir el visor. Se mantienen zoom,
   doble toque, swipe, descarga y compartir.
+- En web, la reproducción solicita un permiso aleatorio temporal mediante una
+  petición autenticada y usa esa URL en el elemento de video. Así el navegador
+  puede pedir rangos sin exponer el JWT ni descargar todo el MP4 como Blob. El
+  permiso expira en una hora; el backend vuelve a validar tarea, archivo y
+  usuario antes de cada respuesta Range. En Android/iOS se conservan los
+  encabezados Bearer y se activa la caché de `expo-video`.
+- Para web, configure `CORS_ORIGINS` en el `.env` del servidor con el origen
+  exacto que sirve Expo Web o el frontend desplegado, por ejemplo
+  `https://app.sumasas.com.co` (sin ruta). No use `*`: las miniaturas y la
+  solicitud autenticada del permiso necesitan que CORS autorice ese origen.
+  Agregue `localhost:8081` solo para desarrollo.
 
 Para desplegar y crear o adjuntar el volumen persistente:
 

@@ -20,8 +20,18 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             f"{api_prefix}/auth/register-password",
         }
         is_public_route = request.url.path in public_auth_routes
+        # Web video elements cannot attach Authorization headers. This route
+        # validates a random, short-lived grant before streaming any bytes.
+        is_video_stream_grant = request.url.path.startswith(
+            f"{api_prefix}/tareas/video-stream/"
+        ) and request.method == "GET"
 
-        if not is_api_request or is_public_route or request.method == "OPTIONS":
+        if (
+            not is_api_request
+            or is_public_route
+            or is_video_stream_grant
+            or request.method == "OPTIONS"
+        ):
             return await call_next(request)
 
         authorization = request.headers.get("Authorization", "")
