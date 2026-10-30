@@ -65,9 +65,6 @@
         "projectId": "2cc6329a-65e7-4e94-831e-dc0307de10e1"
       }
     },
-    "owner": "leordanis.ruiz",
-  "experiments": {
-    "baseUrl": "/operadores"
-  }
+    "owner": "leordanis.ruiz"
   }
 }

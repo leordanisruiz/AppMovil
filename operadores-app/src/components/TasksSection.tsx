@@ -508,7 +508,7 @@ function TaskCard({
     >
       <View style={styles.taskCardHeader}>
         <Text numberOfLines={2} style={styles.taskCardTitle}>
-          {task.tipo_tarea}
+          Tarea #{task.id} · {task.tipo_tarea}
         </Text>
         <TaskStatusBadge status={task.estado} />
       </View>
