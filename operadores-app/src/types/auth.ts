@@ -7,6 +7,7 @@ export type AuthCredentials = {
 
 export type AuthSession = {
   accessToken: string;
+  expiresIn: number;
   operator: Operador;
 };
 

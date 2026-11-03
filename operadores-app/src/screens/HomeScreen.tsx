@@ -10,6 +10,7 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -98,7 +99,7 @@ export function HomeScreen() {
   const responsiveLayout = Platform.OS === 'web' ? getResponsiveLayout(width) : 'mobile';
   const isDesktop = responsiveLayout === 'desktop';
   const isTablet = responsiveLayout === 'tablet';
-  const { operator, logout, expireSession } = useAuth();
+  const { operator, logout } = useAuth();
   const navigation = useNavigation();
   const operatorCode = operator?.codigo?.trim() || null;
   const canAssignTasks = operator?.rolId === 1 || operator?.rolId === 2;
@@ -120,6 +121,7 @@ export function HomeScreen() {
     (task) => task.estado === 'PENDIENTE' || task.estado === 'EN_PROCESO',
   ).length ?? 0;
   const [isWelcomeNoticeDismissed, setIsWelcomeNoticeDismissed] = useState(false);
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<PortalSection>('inicio');
@@ -186,28 +188,14 @@ export function HomeScreen() {
     if (!canRegisterPush) return undefined;
 
     void registerDeviceForPushNotifications()
-      .catch(async (error: unknown) => {
-        if (isAxiosError(error) && error.response?.status === 401) {
-          console.warn(
-            'El backend rechazó el token de sesión al registrar push; se solicitará un nuevo inicio de sesión.',
-            error,
-          );
-          try {
-            await expireSession();
-          } catch (clearError) {
-            console.error(
-              'No se pudo limpiar por completo la sesión vencida:',
-              clearError,
-            );
-          }
-          return;
-        }
+      .catch((error: unknown) => {
+        if (isAxiosError(error) && error.response?.status === 401) return;
 
         console.error('No se pudo registrar el dispositivo para push:', error);
         // Push registration is optional; keep technical failures out of task UI.
       });
     return undefined;
-  }, [canRegisterPush, expireSession]);
+  }, [canRegisterPush]);
 
 
   useEffect(() => {
@@ -257,6 +245,22 @@ export function HomeScreen() {
     }
   };
 
+  const handlePullToRefresh = async () => {
+    if (isPullRefreshing) return;
+
+    setIsPullRefreshing(true);
+    try {
+      await queryClient.refetchQueries(
+        { type: 'active' },
+        { throwOnError: true },
+      );
+    } catch (error) {
+      console.error('No se pudo actualizar la información del portal:', error);
+    } finally {
+      setIsPullRefreshing(false);
+    }
+  };
+
   const selectSection = (section: PortalSection) => {
     if (section === 'tareas' || section === 'tareas-creadas') setTaskInitialFilter('TODAS');
     setActiveSection(section);
@@ -293,6 +297,16 @@ export function HomeScreen() {
       <View style={[styles.appShell, isDesktop && styles.desktopShell]} {...(isDesktop ? {} : backSwipe.panHandlers)}>
         <ScrollView
           contentContainerStyle={styles.content}
+          refreshControl={
+            Platform.OS === 'web' ? undefined : (
+              <RefreshControl
+                onRefresh={() => void handlePullToRefresh()}
+                refreshing={isPullRefreshing}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+              />
+            )
+          }
           showsVerticalScrollIndicator={false}
         >
           <View style={[styles.topBar, isDesktop && styles.desktopHidden]}>

@@ -13,6 +13,7 @@ export function useNovedades(codigoOperador: string | null) {
     },
     enabled: Boolean(codigoOperador),
     staleTime: 0,
+    refetchInterval: 5_000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
   });

@@ -7,7 +7,9 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
+import { isAxiosError } from 'axios';
 import { useMutation } from '@tanstack/react-query';
+import { httpClient } from '../api/httpClient';
 import { authService, getApiErrorMessage } from '../services/authService';
 import { deactivateDevicePushNotifications } from '../services/pushTokenService';
 import { tokenStorage } from '../services/tokenStorage';
@@ -28,10 +30,22 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function isPublicAuthRequest(url: string | undefined): boolean {
+  if (!url) return false;
+
+  const path = url.split('?')[0];
+  return [
+    '/auth/login',
+    '/auth/validate-registration',
+    '/auth/register-password',
+  ].some((route) => path.endsWith(route));
+}
+
 export function AuthProvider({ children }: PropsWithChildren) {
   const [operator, setOperator] = useState<Operador | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<number | null>(null);
   const {
     mutate: signIn,
     isPending: isSigningIn,
@@ -40,7 +54,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
   } = useMutation({
     mutationFn: async (credentials: AuthCredentials) => {
       const session = await authService.login(credentials);
-      await tokenStorage.saveSession(session.accessToken, session.operator);
+      await tokenStorage.saveSession(
+        session.accessToken,
+        session.operator,
+        session.expiresIn,
+      );
       return session;
     },
   });
@@ -53,9 +71,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
         const token = await tokenStorage.get();
 
         if (token) {
+          const expiresAt = await tokenStorage.getExpiresAt();
+          if (expiresAt !== null && expiresAt <= Date.now()) {
+            await tokenStorage.clear();
+            if (isMounted) {
+              setSessionExpired(true);
+              setTokenExpiresAt(null);
+            }
+            return;
+          }
+
           const currentOperator = await tokenStorage.getOperator();
           if (currentOperator) {
-            if (isMounted) setOperator(currentOperator);
+            if (isMounted) {
+              setOperator(currentOperator);
+              setTokenExpiresAt(expiresAt);
+            }
           } else {
             await tokenStorage.clear();
           }
@@ -68,6 +99,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         }
         if (isMounted) {
           setOperator(null);
+          setTokenExpiresAt(null);
         }
         console.error('No se pudo restaurar la sesión:', error);
       } finally {
@@ -80,12 +112,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
       isMounted = false;
     };
   }, []);
+
   const login = useCallback(
     (credentials: AuthCredentials) => {
       signIn(credentials, {
         onSuccess: (session) => {
           setSessionExpired(false);
           setOperator(session.operator);
+          setTokenExpiresAt(Date.now() + session.expiresIn * 1000);
         },
       });
     },
@@ -111,6 +145,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
 
     setOperator(null);
+    setTokenExpiresAt(null);
     setSessionExpired(false);
     resetLogin();
   }, [resetLogin]);
@@ -120,10 +155,57 @@ export function AuthProvider({ children }: PropsWithChildren) {
       await tokenStorage.clear();
     } finally {
       setOperator(null);
+      setTokenExpiresAt(null);
       setSessionExpired(true);
       resetLogin();
     }
   }, [resetLogin]);
+
+  useEffect(() => {
+    if (!operator || tokenExpiresAt === null) return undefined;
+
+    const remainingMilliseconds = tokenExpiresAt - Date.now();
+    const timeout = setTimeout(() => {
+      void expireSession().catch((error: unknown) => {
+        console.error('No se pudo limpiar la sesión vencida:', error);
+      });
+    }, Math.max(remainingMilliseconds, 0));
+
+    return () => clearTimeout(timeout);
+  }, [expireSession, operator, tokenExpiresAt]);
+
+  useEffect(() => {
+    if (!operator) return undefined;
+
+    let expirationStarted = false;
+    const interceptorId = httpClient.interceptors.response.use(
+      (response) => response,
+      async (error: unknown) => {
+        if (
+          !expirationStarted &&
+          isAxiosError(error) &&
+          error.response?.status === 401 &&
+          !isPublicAuthRequest(error.config?.url)
+        ) {
+          expirationStarted = true;
+          try {
+            await expireSession();
+          } catch (clearError) {
+            console.error(
+              'No se pudo limpiar la sesión rechazada por el servidor:',
+              clearError,
+            );
+          }
+        }
+
+        return Promise.reject(error);
+      },
+    );
+
+    return () => {
+      httpClient.interceptors.response.eject(interceptorId);
+    };
+  }, [expireSession, operator]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

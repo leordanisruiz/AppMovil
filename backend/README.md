@@ -201,6 +201,10 @@ Se filtra por `"DW_SUMA"."FactNovedadesSico"."Codigo"` (ignorando espacios
 alrededor del código) y se incluyen filas cuyo estado sea nulo, `PEOCESO` o
 `PROCESO`, sin distinguir mayúsculas ni espacios alrededor del estado. Si no
 hay novedades, `total` es `0` y `novedades` es una lista vacía.
+La app actualiza esta consulta cada 5 segundos mientras está abierta y permite
+forzar la actualización al deslizar hacia abajo. El cliente también cierra la
+sesión al alcanzar `expires_in` o cuando una ruta autenticada responde `401`;
+el usuario debe iniciar sesión nuevamente.
 
 ### Tareas asignadas y evidencias
 
@@ -414,6 +418,10 @@ eliminar esa ventana de duplicación se necesitaría un evento/outbox en el
 sistema que escribe SUMA y soporte de idempotencia del proveedor. El escaneo
 periódico completo debe revisarse con DBA contra el volumen e índices de la
 tabla Fact.
+En Android, Expo Go no registra notificaciones push en este cliente; para
+probar avisos con la app en segundo plano se requiere un development build o
+una compilación instalada, además del worker y el token del dispositivo
+registrados correctamente.
 
 `GET /health` verifica que la API responde; `GET /health/database` verifica
 que la conexión configurada puede ejecutar `SELECT 1`. Este último devuelve

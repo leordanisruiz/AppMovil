@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  AUTH_TOKEN_EXPIRES_AT_STORAGE_KEY,
   AUTH_OPERATOR_STORAGE_KEY,
   AUTH_TOKEN_STORAGE_KEY,
   EXPO_PUSH_TOKEN_STORAGE_KEY,
@@ -33,6 +34,18 @@ export const tokenStorage = {
     return AsyncStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
   },
 
+  async getExpiresAt(): Promise<number | null> {
+    const value = await AsyncStorage.getItem(AUTH_TOKEN_EXPIRES_AT_STORAGE_KEY);
+    if (value === null) return null;
+
+    const expiresAt = Number(value);
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= 0) {
+      throw new Error('La fecha de expiración del token no es válida.');
+    }
+
+    return expiresAt;
+  },
+
   async getPushToken(): Promise<string | null> {
     return AsyncStorage.getItem(EXPO_PUSH_TOKEN_STORAGE_KEY);
   },
@@ -57,9 +70,21 @@ export const tokenStorage = {
       : null;
   },
 
-  async saveSession(token: string, operator: Operador): Promise<void> {
+  async saveSession(
+    token: string,
+    operator: Operador,
+    expiresInSeconds: number,
+  ): Promise<void> {
+    if (!Number.isFinite(expiresInSeconds) || expiresInSeconds <= 0) {
+      throw new Error('El tiempo de expiración del token no es válido.');
+    }
+
     await AsyncStorage.multiSet([
       [AUTH_TOKEN_STORAGE_KEY, token],
+      [
+        AUTH_TOKEN_EXPIRES_AT_STORAGE_KEY,
+        String(Date.now() + expiresInSeconds * 1000),
+      ],
       [AUTH_OPERATOR_STORAGE_KEY, JSON.stringify(operator)],
     ]);
   },
@@ -67,6 +92,7 @@ export const tokenStorage = {
   async clear(): Promise<void> {
     await AsyncStorage.multiRemove([
       AUTH_TOKEN_STORAGE_KEY,
+      AUTH_TOKEN_EXPIRES_AT_STORAGE_KEY,
       AUTH_OPERATOR_STORAGE_KEY,
       EXPO_PUSH_TOKEN_STORAGE_KEY,
     ]);
