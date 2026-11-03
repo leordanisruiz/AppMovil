@@ -16,10 +16,10 @@ _NOVEDADES_BY_OPERATOR_CODE_QUERY = text(
         fns."Detalle" AS "Descripcion",
         fns."Estado" AS "Estado"
     FROM "DW_SUMA"."FactNovedadesSico" AS fns
-    WHERE fns."Codigo"::text = CAST(:codigo_operador AS text)
+    WHERE BTRIM(fns."Codigo"::text) = BTRIM(CAST(:codigo_operador AS text))
       AND (
-          UPPER(fns."Estado") IS NULL
-          OR fns."Estado" IN ('PEOCESO', 'PROCESO')
+          fns."Estado" IS NULL
+          OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')
       )
     ORDER BY fns."FechaIngreso" DESC NULLS LAST, fns."Id" DESC
     """

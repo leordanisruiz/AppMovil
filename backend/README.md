@@ -197,9 +197,10 @@ contador sin recalcularlo:
 }
 ```
 
-Se filtra por `"DW_SUMA"."FactNovedadesSico"."Codigo"` y se incluyen filas
-cuyo estado sea nulo, `PEOCESO` o `PROCESO`, según la consulta acordada. Si
-no hay novedades, `total` es `0` y `novedades` es una lista vacía.
+Se filtra por `"DW_SUMA"."FactNovedadesSico"."Codigo"` (ignorando espacios
+alrededor del código) y se incluyen filas cuyo estado sea nulo, `PEOCESO` o
+`PROCESO`, sin distinguir mayúsculas ni espacios alrededor del estado. Si no
+hay novedades, `total` es `0` y `novedades` es una lista vacía.
 
 ### Tareas asignadas y evidencias
 

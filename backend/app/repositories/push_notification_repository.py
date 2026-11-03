@@ -96,7 +96,8 @@ _POLL_NEW_NOVELTIES = text(
         CURRENT_TIMESTAMP
     FROM eligible_novelties
     JOIN "DW_SUMA"."DimEmpleados" AS employee
-      ON employee."Codigo"::text = eligible_novelties.codigo_operador::text
+      ON BTRIM(employee."Codigo"::text) =
+         BTRIM(eligible_novelties.codigo_operador::text)
      AND UPPER(BTRIM(employee."IndicadorActividad")) = 'A'
     JOIN "DW_CONFIG".expo_push_tokens AS device
       ON BTRIM(device.tipo_documento) = BTRIM(employee."TipoDocumento"::text)
@@ -104,7 +105,8 @@ _POLL_NEW_NOVELTIES = text(
      AND device.activo = TRUE
     JOIN "DW_SUMA"."FactNovedadesSico" AS fns
       ON fns."Id" = eligible_novelties.id_novedad
-     AND fns."Codigo" = eligible_novelties.codigo_operador
+     AND BTRIM(fns."Codigo"::text) =
+         BTRIM(eligible_novelties.codigo_operador::text)
      AND (
          fns."Estado" IS NULL
          OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')

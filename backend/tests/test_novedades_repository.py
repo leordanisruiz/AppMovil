@@ -27,10 +27,13 @@ class NovedadesRepositoryTests(unittest.TestCase):
         statement, parameters = db.execute.call_args.args
         sql = str(statement)
         self.assertIn('"DW_SUMA"."FactNovedadesSico"', sql)
-        self.assertIn("fns.\"Codigo\" = :codigo_operador", sql)
-        self.assertIn("UPPER(fns.\"Estado\") IS NULL", sql)
         self.assertIn(
-            "fns.\"Estado\" IN ('PEOCESO', 'PROCESO')",
+            'BTRIM(fns."Codigo"::text) = BTRIM(CAST(:codigo_operador AS text))',
+            sql,
+        )
+        self.assertIn('fns."Estado" IS NULL', sql)
+        self.assertIn(
+            "UPPER(BTRIM(fns.\"Estado\")) IN ('PEOCESO', 'PROCESO')",
             sql,
         )
         self.assertEqual(parameters, {"codigo_operador": 809772})

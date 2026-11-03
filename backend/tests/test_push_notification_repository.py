@@ -70,6 +70,16 @@ class PushNotificationRepositoryTests(unittest.TestCase):
         discovery_sql = str(push_notification_repository._POLL_NEW_NOVELTIES)
         self.assertIn('"DW_SUMA"."FactNovedadesSico"', discovery_sql)
         self.assertIn('"DW_SUMA"."DimEmpleados"', discovery_sql)
+        self.assertRegex(
+            discovery_sql,
+            r'BTRIM\(employee\."Codigo"::text\)\s*=\s*'
+            r'BTRIM\(eligible_novelties\.codigo_operador::text\)',
+        )
+        self.assertRegex(
+            discovery_sql,
+            r'BTRIM\(fns\."Codigo"::text\)\s*=\s*'
+            r'BTRIM\(eligible_novelties\.codigo_operador::text\)',
+        )
         self.assertIn('UPPER(BTRIM(employee."IndicadorActividad")) = \'A\'', discovery_sql)
         self.assertIn("device.activo = TRUE", discovery_sql)
         self.assertIn(

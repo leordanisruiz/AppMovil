@@ -70,9 +70,23 @@ class TareasRepositoryTests(unittest.TestCase):
 
     def test_novelty_lookup_joins_operator_codes_as_text(self) -> None:
         self.assertIn(
-            'de."Codigo" = fns."Codigo"::text',
+            'BTRIM(de."Codigo"::text) = BTRIM(fns."Codigo"::text)',
             str(tareas_repository._NOVELTY_BY_ID),
         )
+
+    def test_open_novelty_queries_normalize_code_and_status(self) -> None:
+        operator_novelties = str(tareas_repository._OPERATOR_NOVELTIES)
+        selected_novelties = str(tareas_repository._NOVELTIES_BY_IDS)
+
+        self.assertIn(
+            'BTRIM(fns."Codigo"::text) = BTRIM(CAST(:codigo_operador AS text))',
+            operator_novelties,
+        )
+        for statement in (operator_novelties, selected_novelties):
+            self.assertIn(
+                "UPPER(BTRIM(fns.\"Estado\")) IN ('PEOCESO', 'PROCESO')",
+                statement,
+            )
 
     def test_task_notification_enqueue_compares_employee_and_device_text(self) -> None:
         statement = str(tareas_repository._ENQUEUE_TASK_NOTIFICATIONS)

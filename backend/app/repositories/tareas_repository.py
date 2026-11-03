@@ -68,10 +68,10 @@ _OPERATOR_NOVELTIES = text(
         fns."Detalle" AS descripcion,
         fns."Estado" AS estado
     FROM "DW_SUMA"."FactNovedadesSico" AS fns
-    WHERE fns."Codigo"::text = CAST(:codigo_operador AS text)
+    WHERE BTRIM(fns."Codigo"::text) = BTRIM(CAST(:codigo_operador AS text))
       AND (
-          UPPER(fns."Estado") IS NULL
-          OR fns."Estado" IN ('PEOCESO', 'PROCESO')
+          fns."Estado" IS NULL
+          OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')
       )
     ORDER BY fns."FechaIngreso" DESC NULLS LAST, fns."Id" DESC
     """
@@ -83,8 +83,8 @@ _NOVELTIES_BY_IDS = text(
     FROM "DW_SUMA"."FactNovedadesSico" AS fns
     WHERE fns."Id" IN :novedad_ids
       AND (
-          UPPER(fns."Estado") IS NULL
-          OR fns."Estado" IN ('PEOCESO', 'PROCESO')
+          fns."Estado" IS NULL
+          OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')
       )
     """
 ).bindparams(bindparam("novedad_ids", expanding=True))
@@ -108,12 +108,12 @@ _NOVELTY_BY_ID = text(
         ) AS nombre_completo
     FROM "DW_SUMA"."FactNovedadesSico" AS fns
     JOIN "DW_SUMA"."DimEmpleados" AS de
-      ON de."Codigo" = fns."Codigo"::text
+      ON BTRIM(de."Codigo"::text) = BTRIM(fns."Codigo"::text)
      AND de."IndicadorActividad" = 'A'
     WHERE fns."Id" = :novedad_id
       AND (
-          UPPER(fns."Estado") IS NULL
-          OR fns."Estado" IN ('PEOCESO', 'PROCESO')
+          fns."Estado" IS NULL
+          OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')
       )
     """
 )
