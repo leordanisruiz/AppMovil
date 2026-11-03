@@ -10,6 +10,7 @@ export const apiBaseUrl =
 
 console.log('EXPO_PUBLIC_API_URL=', process.env.EXPO_PUBLIC_API_URL);
 console.log('API URL=', apiBaseUrl);
+
 export const httpClient = create({
   baseURL: apiBaseUrl,
   timeout: 15000,
