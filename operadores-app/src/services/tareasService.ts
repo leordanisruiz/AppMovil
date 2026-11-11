@@ -106,7 +106,10 @@ export const tareasService = {
   ): Promise<UploadEvidenceResponse> {
     const formData = new FormData() as NativeFormData;
     for (const asset of assets) {
-      if (asset.webFile) {
+      if (Platform.OS === 'web') {
+        if (!asset.webFile) {
+          throw new Error(`No fue posible leer "${asset.name}". Adjunta el archivo nuevamente.`);
+        }
         (formData as FormData).append('files', asset.webFile, asset.name);
       } else {
         formData.append('files', {
