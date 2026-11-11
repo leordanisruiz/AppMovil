@@ -58,7 +58,7 @@
       "predictiveBackGestureEnabled": true
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/brand-logo.png"
     },
     "extra": {
       "eas": {
