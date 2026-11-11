@@ -27,5 +27,15 @@ httpClient.interceptors.request.use(async (config) => {
     config.headers.Authorization = `Bearer ${token}`;
   }
 
+  // Let the browser set the multipart boundary for FormData uploads. The
+  // shared JSON default would otherwise make Axios serialize FormData as JSON.
+  if (
+    Platform.OS === 'web' &&
+    typeof FormData !== 'undefined' &&
+    config.data instanceof FormData
+  ) {
+    config.headers.delete('Content-Type');
+  }
+
   return config;
 });
