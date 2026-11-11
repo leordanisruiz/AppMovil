@@ -60,7 +60,9 @@ export function EvidenceGallery({
   const [previewLimit, setPreviewLimit] = useState(4);
 
   useEffect(() => {
-    if (!headersReady || !headers) return;
+    // expo-image's web prefetch implementation uses a plain <img> and cannot
+    // attach Authorization headers. The rendered Image below fetches securely.
+    if (Platform.OS === 'web' || !headersReady || !headers) return;
     const initialThumbnails = evidences
       .slice(0, 4)
       .map((evidence) => tareasService.evidenceThumbnailUrl(evidence.taskId ?? taskId, evidence.nombre));
@@ -147,6 +149,18 @@ function EvidenceCard({
   );
   const isImage = evidence.tipo === 'image';
   const showThumbnail = !hasPreviewError && previewUri !== null;
+  const previewSettled = useRef(false);
+  const previewSource = useMemo(
+    () => previewUri
+      ? { uri: previewUri, headers, cacheKey: `${taskId}:${evidence.nombre}:thumbnail` }
+      : null,
+    [evidence.nombre, headers, previewUri, taskId],
+  );
+  const settlePreview = () => {
+    if (previewSettled.current) return;
+    previewSettled.current = true;
+    onPreviewSettled();
+  };
 
   return (
     <Pressable
@@ -162,13 +176,13 @@ function EvidenceCard({
             contentFit="cover"
             onError={() => {
               setHasPreviewError(true);
-              onPreviewSettled();
+              settlePreview();
             }}
             onLoad={() => {
               setPreviewLoaded(true);
-              onPreviewSettled();
+              settlePreview();
             }}
-            source={{ uri: previewUri, headers, cacheKey: `${taskId}:${evidence.nombre}:thumbnail` }}
+            source={previewSource ?? undefined}
             style={styles.cardImage}
           />
         ) : (isLoading || !shouldLoadPreview) ? (
@@ -511,6 +525,10 @@ function ZoomableImage({
   );
   const [imageRetry, setImageRetry] = useState(0);
   const lastTap = useRef(0);
+  const imageSource = useMemo(
+    () => ({ uri, headers, cacheKey: `${uri}#retry-${imageRetry}` }),
+    [headers, imageRetry, uri],
+  );
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -538,7 +556,7 @@ function ZoomableImage({
       }}
       onLoad={() => setLoadState('loaded')}
       onLoadStart={() => setLoadState('loading')}
-      source={{ uri, headers, cacheKey: `${uri}#retry-${imageRetry}` }}
+      source={imageSource}
       style={{ height: imageHeight, width: imageWidth }}
     />
   );
@@ -635,6 +653,7 @@ function EvidenceVideoPlayer({
   const sourceLoad = useEvent(player, 'sourceLoad', null);
   const sourceDuration = sourceLoad?.duration ?? player.duration;
   const [firstFrameRendered, setFirstFrameRendered] = useState(false);
+  const posterSource = useMemo(() => ({ uri: posterUri, headers }), [headers, posterUri]);
 
   if (!uri) {
     return (
@@ -647,7 +666,7 @@ function EvidenceVideoPlayer({
 
   return (
     <View style={{ height, width }}>
-      {!firstFrameRendered ? <Image cachePolicy="memory-disk" contentFit="contain" source={{ uri: posterUri, headers }} style={[StyleSheet.absoluteFill, { height, width }]} /> : null}
+      {!firstFrameRendered ? <Image cachePolicy="memory-disk" contentFit="contain" source={posterSource} style={[StyleSheet.absoluteFill, { height, width }]} /> : null}
       <VideoView
         contentFit="contain"
         fullscreenOptions={{ enable: true }}
@@ -802,7 +821,7 @@ function useEvidenceSource(
       Platform.OS === 'web' && evidence?.tipo === 'video' && isLoading
     ),
     hasError: evidence?.tipo === 'video' ? hasError : false,
-    uri: !enabled || !headersReady || !evidence
+    uri: !enabled || !headersReady || !evidence || (Platform.OS === 'web' && !headers)
       ? null
       : thumbnail
         ? getEvidenceSourceUrl(taskId, evidence, true)
