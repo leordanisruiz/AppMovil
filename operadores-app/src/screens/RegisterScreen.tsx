@@ -176,6 +176,7 @@ export function RegisterScreen({ navigation }: RegisterScreenProps) {
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
+          showsVerticalScrollIndicator={Platform.OS === 'web'}
         >
           <Pressable
             accessibilityRole="button"

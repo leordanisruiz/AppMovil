@@ -59,6 +59,7 @@ export function LoginScreen({ navigation }: LoginScreenProps) {
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
+          showsVerticalScrollIndicator={Platform.OS === 'web'}
         >
           <View style={Platform.OS === 'web' ? styles.webContent : undefined}>
             <Image

@@ -59,7 +59,7 @@ export function DesktopLayout({
           {!sidebarCollapsed ? <View><Text style={styles.brandName}>Portal Operadores</Text><Text style={styles.brandCaption}>SUMA · OPERACIÓN</Text></View> : null}
         </View>
         {!sidebarCollapsed ? <Text style={styles.navCaption}>ESPACIO DE TRABAJO</Text> : null}
-        <ScrollView contentContainerStyle={[styles.navList, sidebarCollapsed && styles.navListCollapsed]} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={[styles.navList, sidebarCollapsed && styles.navListCollapsed]} showsVerticalScrollIndicator={Platform.OS === 'web'}>
           {items.map((item) => {
             const active = activeSection === item.value;
             return (
@@ -122,12 +122,12 @@ const styles = StyleSheet.create({
   accountMeta: { color: '#D2BDBD', fontSize: 10 },
   logout: { marginTop: 12, paddingHorizontal: 4, paddingVertical: 10 },
   logoutText: { color: '#F6EDED', fontSize: 12, fontWeight: '700' },
-  main: { flex: 1, minWidth: 0 },
+  main: { flex: 1, minHeight: 0, minWidth: 0 },
   header: { alignItems: 'center', backgroundColor: '#FFFFFF', borderBottomColor: '#E7EAEE', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 82, paddingHorizontal: 36 },
   sidebarToggle: { alignItems: 'center', borderColor: '#E2E6EA', borderRadius: 8, borderWidth: 1, height: 36, justifyContent: 'center', marginRight: 16, width: 36 },
   sidebarToggleText: { color: '#4D5660', fontSize: 18, fontWeight: '700' },
   headerCopy: { flex: 1 },
   headerCaption: { color: '#929AA4', fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   headerTitle: { color: '#252B31', fontSize: 20, fontWeight: '800', marginTop: 4 },
-  mainContent: { flex: 1, gap: spacing.large, paddingBottom: 20, paddingHorizontal: 36, paddingTop: 28, width: '100%' },
+  mainContent: { flex: 1, gap: spacing.large, minHeight: 0, paddingBottom: 20, paddingHorizontal: 36, paddingTop: 28, width: '100%' },
 });

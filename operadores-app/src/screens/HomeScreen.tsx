@@ -307,7 +307,7 @@ export function HomeScreen() {
               />
             )
           }
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator={Platform.OS === 'web'}
         >
           <View style={[styles.topBar, isDesktop && styles.desktopHidden]}>
             <Pressable
@@ -987,9 +987,11 @@ const styles = StyleSheet.create({
   },
   appShell: {
     flex: 1,
+    minHeight: 0,
   },
   desktopShell: {
     backgroundColor: '#F4F6F8',
+    minHeight: 0,
     minWidth: 0,
   },
   desktopHidden: {
