@@ -243,18 +243,27 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
     pickerInProgress.current = true;
     pendingPickerAction.current = action;
     setIsSourcePickerVisible(false);
+    // Mobile browsers require file/camera pickers to open during the original
+    // user gesture. Waiting for the modal animation (or a permission promise)
+    // loses that activation and Safari silently ignores the request.
+    if (Platform.OS === 'web') {
+      void runPendingPickerAction();
+      return;
+    }
     setTimeout(() => void runPendingPickerAction(), 500);
   };
 
   const takePhoto = async () => {
     try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          'Permiso de cámara requerido',
-          'Permite el acceso a la cámara para tomar una foto como evidencia.',
-        );
-        return;
+      if (Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert(
+            'Permiso de cámara requerido',
+            'Permite el acceso a la cámara para tomar una foto como evidencia.',
+          );
+          return;
+        }
       }
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
@@ -269,10 +278,12 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
 
   const recordVideo = async () => {
     try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert('Permiso de cámara requerido', 'Permite el acceso a la cámara para grabar un video.');
-        return;
+      if (Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Permiso de cámara requerido', 'Permite el acceso a la cámara para grabar un video.');
+          return;
+        }
       }
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['videos'],
@@ -287,13 +298,15 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
 
   const chooseGallery = async () => {
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          'Permiso de galería requerido',
-          'Permite el acceso a fotos y videos para seleccionarlos. También puedes usar “Seleccionar Archivo”.',
-        );
-        return;
+      if (Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert(
+            'Permiso de galería requerido',
+            'Permite el acceso a fotos y videos para seleccionarlos. También puedes usar “Seleccionar Archivo”.',
+          );
+          return;
+        }
       }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],

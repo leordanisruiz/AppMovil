@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { colors, radius, spacing } from '../theme';
 
 export type PortalNavItem = {
