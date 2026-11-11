@@ -917,6 +917,7 @@ function toTaskEvidenceAsset(
     name: normalizedFileName.replace(/[^\w.-]/g, '_'),
     mimeType,
     size: asset.fileSize ?? 0,
+    webFile: Platform.OS === 'web' ? asset.file : undefined,
     durationMs: typeof asset.duration === 'number' ? asset.duration : undefined,
     capturedAt: capturedNow
       ? new Date(Date.now() - (asset.type === 'video' ? asset.duration ?? 0 : 0)).toISOString()
@@ -949,6 +950,7 @@ function toTaskEvidenceAssetFromDocument(
     name: asset.name.replace(/[^\w.-]/g, '_'),
     mimeType,
     size: asset.size,
+    webFile: Platform.OS === 'web' ? asset.file : undefined,
     capturedAt: asset.lastModified ? new Date(asset.lastModified).toISOString() : undefined,
   };
 }
