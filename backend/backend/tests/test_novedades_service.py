@@ -64,6 +64,23 @@ class NovedadesServiceTests(unittest.TestCase):
         self.assertEqual(response.total, 0)
         self.assertEqual(response.novedades, [])
 
+    def test_category_returns_only_matching_rows_and_count(self) -> None:
+        self.operator_repository.get_by_identity.return_value = {"Codigo": "809772"}
+        self.novelties_repository.list_by_category.return_value = [{
+            "IdNovedad": 12, "FechaNovedad": None, "Codigo": "809772",
+            "TipoNovedad": "I1234", "Descripcion": "detalle", "Estado": None,
+        }]
+        response = self.service.consultar(
+            self.db, codigo_operador="809772", tipo_documento="CC",
+            identificacion="123456", categoria="ico",
+        )
+        self.assertEqual(response.total, 1)
+        self.assertEqual(response.novedades[0].TipoNovedad, "I1234")
+        self.assertIsNone(response.novedades[0].Estado)
+        self.novelties_repository.list_by_category.assert_called_once_with(
+            self.db, codigo_operador=809772, categoria="ico",
+        )
+
     def test_rejects_code_that_does_not_belong_to_authenticated_user(self) -> None:
         self.operator_repository.get_by_identity.return_value = {
             "Codigo": "809773"

@@ -25,9 +25,10 @@ class NovedadesService:
         self,
         db: Session,
         *,
-        codigo_operador: int,
+        codigo_operador: str,
         tipo_documento: str,
         identificacion: str,
+        categoria: str = "todas",
     ) -> NovedadesResponse:
         try:
             operador = self._operador_repository.get_by_identity(
@@ -50,10 +51,14 @@ class NovedadesService:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="El código no corresponde al usuario autenticado.",
                 )
-            rows = self._novedades_repository.list_by_operator_code(
-                db,
-                codigo_operador=operator_code,
-            )
+            if categoria == "todas":
+                rows = self._novedades_repository.list_by_operator_code(
+                    db, codigo_operador=operator_code,
+                )
+            else:
+                rows = self._novedades_repository.list_by_category(
+                    db, codigo_operador=operator_code, categoria=categoria,
+                )
         except SQLAlchemyError as exc:
             self._raise_database_unavailable(exc)
 

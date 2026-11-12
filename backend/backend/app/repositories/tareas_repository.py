@@ -5,9 +5,12 @@ from typing import Any
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
+from app.repositories.novedades_repository import ICO_FILTER, INASISTENCIAS_FILTER
+
 _TASK_COLUMNS = """
     id,
     novedades_ids,
+    novedades_referencias,
     operador_id,
     tipo_tarea,
     descripcion,
@@ -16,6 +19,42 @@ _TASK_COLUMNS = """
     estado,
     COALESCE(evidencias->'evidencias', '[]'::jsonb) AS evidencias
 """
+
+_ASSIGNABLE_NOVELTIES = f"""
+    SELECT fi."IdIco" AS id_novedad, fi."FechaViaje" AS fecha_novedad,
+           REPLACE(fi."IdSaeConductor"::text, '.0', '') AS codigo,
+           fi."TipoNovedad" AS tipo_novedad, NULL::text AS grupo,
+           NULL::text AS subgrupo,
+           REGEXP_REPLACE(fi."Descripcion", '(?i)/?reportado por.*$', '') AS descripcion,
+           NULL::text AS estado, 'ico'::text AS categoria
+    FROM "DW_SUMA"."FactICO" AS fi
+    WHERE {ICO_FILTER}
+    UNION ALL
+    SELECT fns."Id", fns."FechaIngreso", BTRIM(fns."Codigo"::text),
+           fns."Novedad", fns."Grupo", fns."Subgrupo", fns."Detalle",
+           fns."Estado", 'inasistencias'::text
+    FROM "DW_SUMA"."FactNovedadesSico" AS fns
+    WHERE {INASISTENCIAS_FILTER}
+"""
+
+_ASSIGNABLE_BY_OPERATOR = text(f"""
+    SELECT * FROM ({_ASSIGNABLE_NOVELTIES}) AS novelty
+    WHERE novelty.codigo = CAST(:codigo_operador AS text)
+    ORDER BY fecha_novedad DESC NULLS LAST, id_novedad DESC
+""")
+
+_ASSIGNABLE_BY_ID = text(f"""
+    SELECT novelty.*, de."TipoDocumento" AS tipo_documento,
+           de."Identificacion"::text AS identificacion,
+           BTRIM(COALESCE(de."NombreEmpleado", '') || ' ' ||
+                 COALESCE(de."ApellidosEmpleado", '')) AS nombre_completo
+    FROM ({_ASSIGNABLE_NOVELTIES}) AS novelty
+    JOIN "DW_SUMA"."DimEmpleados" AS de
+      ON BTRIM(de."Codigo"::text) = novelty.codigo
+     AND de."IndicadorActividad" = 'A'
+    WHERE novelty.id_novedad = :novedad_id
+    ORDER BY novelty.categoria, novelty.codigo
+""")
 
 _SEARCH_OPERATORS = text(
     """
@@ -139,6 +178,7 @@ _CREATE_TASK = text(
     f"""
     INSERT INTO "DW_OPERACIONAL".tareas_operador (
         novedades_ids,
+        novedades_referencias,
         operador_id,
         tipo_tarea,
         descripcion,
@@ -148,6 +188,7 @@ _CREATE_TASK = text(
     )
     VALUES (
         CAST(:novedades_ids AS jsonb),
+        CAST(:novedades_referencias AS jsonb),
         :operador_id,
         :tipo_tarea,
         :descripcion,
@@ -324,6 +365,19 @@ _UPDATE_STATE = text(
     SET estado = :estado
     WHERE id = :tarea_id
       AND operador_id = :operador_id
+      AND estado NOT IN ('COMPLETADA', 'CERRADO')
+      AND (
+          :estado <> 'COMPLETADA'
+          OR (
+              estado = 'EN_PROCESO'
+              AND (SELECT COUNT(*) FROM jsonb_array_elements(
+                  COALESCE(evidencias->'evidencias', '[]'::jsonb)
+              ) AS item(value) WHERE value->>'tipo' = 'image') >= 12
+              AND (SELECT COUNT(*) FROM jsonb_array_elements(
+                  COALESCE(evidencias->'evidencias', '[]'::jsonb)
+              ) AS item(value) WHERE value->>'tipo' = 'video') >= 2
+          )
+      )
     RETURNING {_TASK_COLUMNS}
     """
 )
@@ -341,6 +395,20 @@ _CLOSE_CREATED_TASK = text(
 
 
 class TareasRepository:
+    def list_assignable_novelties(
+        self, db: Session, *, codigo_operador: int
+    ) -> list[Mapping[str, Any]]:
+        return list(db.execute(
+            _ASSIGNABLE_BY_OPERATOR, {"codigo_operador": codigo_operador},
+        ).mappings().all())
+
+    def search_assignable_novelties(
+        self, db: Session, *, novedad_id: int
+    ) -> list[Mapping[str, Any]]:
+        return list(db.execute(
+            _ASSIGNABLE_BY_ID, {"novedad_id": novedad_id},
+        ).mappings().all())
+
     def search_operators(
         self,
         db: Session,
@@ -418,12 +486,14 @@ class TareasRepository:
         tipo_tarea: str,
         descripcion: str,
         usuario_creacion: str,
+        novedades_referencias: list[dict[str, Any]] | None = None,
     ) -> tuple[Mapping[str, Any], int]:
         result = db.execute(
             _CREATE_TASK,
             {
                 "operador_id": operador_id,
                 "novedades_ids": json.dumps(novedades_ids),
+                "novedades_referencias": json.dumps(novedades_referencias or []),
                 "tipo_tarea": tipo_tarea,
                 "descripcion": descripcion,
                 "usuario_creacion": usuario_creacion,

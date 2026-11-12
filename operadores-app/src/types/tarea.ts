@@ -17,6 +17,7 @@ export type TaskEvidence = {
 export type OperatorTask = {
   id: number;
   novedades_ids: number[];
+  novedades_referencias?: NoveltyReference[];
   operador_id: number;
   tipo_tarea: string;
   descripcion: string;
@@ -35,6 +36,7 @@ export type AssignableOperator = {
 
 export type AssignableNovelty = {
   id_novedad: number;
+  categoria: 'ico' | 'inasistencias';
   fecha_novedad: string | null;
   codigo: number;
   tipo_novedad: string | null;
@@ -48,6 +50,11 @@ export type AssignableNovelty = {
   nombre_completo?: string | null;
 };
 
+export type NoveltyReference = {
+  categoria: 'ico' | 'inasistencias';
+  id_novedad: number;
+};
+
 export type TaskTypeOption = {
   id: number;
   nombre: string;
@@ -56,6 +63,7 @@ export type TaskTypeOption = {
 export type CreateTaskRequest = {
   operador_id: number;
   novedades_ids: number[];
+  novedades_referencias: NoveltyReference[];
   tipo_tarea_id: number;
   descripcion: string;
 };

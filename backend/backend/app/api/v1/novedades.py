@@ -50,6 +50,7 @@ def consultar_novedades(
         codigo_operador=consulta.codigo_operador,
         tipo_documento=tipo_documento,
         identificacion=identificacion,
+        categoria=consulta.categoria,
     )
 
 

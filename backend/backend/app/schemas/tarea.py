@@ -1,11 +1,18 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 TaskState = Literal["PENDIENTE", "EN_PROCESO", "COMPLETADA", "CERRADO"]
 EvidenceType = Literal["image", "video"]
+
+
+class NovedadReferencia(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    categoria: Literal["ico", "inasistencias"]
+    id_novedad: int = Field(gt=0)
 
 
 class Evidencia(BaseModel):
@@ -24,6 +31,7 @@ class TareaResponse(BaseModel):
 
     id: int
     novedades_ids: list[int]
+    novedades_referencias: list[NovedadReferencia] = Field(default_factory=list)
     operador_id: int
     tipo_tarea: str
     descripcion: str
@@ -57,6 +65,7 @@ class NovedadAsignacion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id_novedad: int
+    categoria: Literal["ico", "inasistencias"] | None = None
     fecha_novedad: date | datetime | None
     codigo: int
     tipo_novedad: str | None
@@ -79,6 +88,7 @@ class TareaCreateRequest(BaseModel):
 
     operador_id: int = Field(gt=0)
     novedades_ids: list[int] = Field(min_length=1, max_length=100)
+    novedades_referencias: list[NovedadReferencia] = Field(default_factory=list, max_length=100)
     tipo_tarea_id: int = Field(gt=0)
     descripcion: str = Field(min_length=1, max_length=10_000)
 
@@ -88,6 +98,16 @@ class TareaCreateRequest(BaseModel):
         if any(value <= 0 for value in values) or len(set(values)) != len(values):
             raise ValueError("Las novedades deben ser IDs positivos y no repetidos.")
         return values
+
+    @model_validator(mode="after")
+    def references_match_ids(self) -> "TareaCreateRequest":
+        if self.novedades_referencias:
+            references = {(item.categoria, item.id_novedad) for item in self.novedades_referencias}
+            if len(references) != len(self.novedades_referencias) or {
+                item.id_novedad for item in self.novedades_referencias
+            } != set(self.novedades_ids):
+                raise ValueError("Las referencias deben ser únicas y coincidir con los IDs de novedades.")
+        return self
 
 
 class TareaAsignacionResponse(BaseModel):

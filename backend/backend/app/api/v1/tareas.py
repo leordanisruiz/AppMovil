@@ -90,6 +90,35 @@ def listar_novedades_operador(
 
 
 @router.get(
+    "/asignacion/operadores/{codigo_operador}/novedades-disponibles",
+    response_model=list[NovedadAsignacion],
+    summary="Consultar ICO e inasistencias de un operador",
+)
+def listar_novedades_disponibles(
+    codigo_operador: int, request: Request, db: Session = Depends(get_db),
+) -> list[NovedadAsignacion]:
+    tipo_documento, identificacion = _authenticated_identity(request)
+    return tareas_service.list_assignable_novelties(
+        db, codigo_operador=codigo_operador,
+        tipo_documento=tipo_documento, identificacion=identificacion,
+    )
+
+
+@router.get(
+    "/asignacion/novedades/buscar/{novedad_id}",
+    response_model=list[NovedadAsignacion],
+    summary="Buscar ICO e inasistencias por ID",
+)
+def buscar_novedades(
+    novedad_id: int, request: Request, db: Session = Depends(get_db),
+) -> list[NovedadAsignacion]:
+    tipo_documento, identificacion = _authenticated_identity(request)
+    return tareas_service.search_assignable_novelties(
+        db, novedad_id=novedad_id, tipo_documento=tipo_documento, identificacion=identificacion,
+    )
+
+
+@router.get(
     "/asignacion/novedades/{novedad_id}",
     response_model=NovedadAsignacion,
     summary="Buscar una novedad abierta por su ID",

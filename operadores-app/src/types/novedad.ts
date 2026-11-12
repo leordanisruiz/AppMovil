@@ -13,3 +13,10 @@ export type NovedadesResponse = {
   total: number;
   novedades: Novedad[];
 };
+
+export type CategoriaNovedad = 'ico' | 'inasistencias' | 'isv' | 'danos';
+
+export type NovedadesResumen = {
+  total: number;
+  categorias: Record<'ico' | 'inasistencias', NovedadesResponse>;
+};

@@ -26,6 +26,8 @@ class Settings:
     cors_origins: tuple[str, ...] = (
         "http://localhost:8081",
         "http://127.0.0.1:8081",
+        "http://portaloperadores.sumasas.com.co",
+        "https://portaloperadores.sumasas.com.co",
     )
     cors_origin_regex: str | None = None
     evidence_cache_path: str = "/var/cache/appmovil"

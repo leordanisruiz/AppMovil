@@ -21,6 +21,10 @@ class TareaOperador(Base):
             name="ck_tareas_operador_novedades_ids",
         ),
         CheckConstraint(
+            "jsonb_typeof(novedades_referencias) = 'array'",
+            name="ck_tareas_operador_novedades_referencias",
+        ),
+        CheckConstraint(
             "jsonb_typeof(evidencias) = 'object' "
             "AND jsonb_typeof(evidencias->'evidencias') = 'array'",
             name="ck_tareas_operador_evidencias",
@@ -52,6 +56,11 @@ class TareaOperador(Base):
         primary_key=True,
     )
     novedades_ids: Mapped[list[int]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    novedades_referencias: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB,
         nullable=False,
         server_default=text("'[]'::jsonb"),

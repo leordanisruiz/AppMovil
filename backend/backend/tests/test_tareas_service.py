@@ -88,6 +88,7 @@ class TareasServiceTests(unittest.TestCase):
             self.db,
             operador_id=809772,
             novedades_ids=[17, 18],
+            novedades_referencias=[],
             tipo_tarea="Capacitación",
             descripcion="Realizar la actividad asignada.",
             usuario_creacion="CC-5843452",
@@ -121,6 +122,115 @@ class TareasServiceTests(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 422)
         self.task_repository.create_task.assert_not_called()
+
+    def test_assignment_preserves_categories_for_colliding_ids(self) -> None:
+        user_repository = Mock()
+        user_repository.get_by_identity.return_value = Mock(rol_id=2)
+        service = TareasService(self.task_repository, self.operator_repository, user_repository)
+        self.task_repository.get_operator_by_code.return_value = {"codigo": "809772"}
+        references = [
+            {"categoria": "ico", "id_novedad": 17},
+            {"categoria": "inasistencias", "id_novedad": 17},
+        ]
+        self.task_repository.list_assignable_novelties.return_value = [
+            {**reference, "codigo": 809772} for reference in references
+        ]
+        self.task_repository.get_task_type_name.return_value = "Capacitación"
+        task = _task_record(novedades_ids=[17])
+        task["novedades_referencias"] = references
+        self.task_repository.create_task.return_value = (task, 0)
+        result = service.create_task_for_operator(
+            self.db,
+            request=TareaCreateRequest(
+                operador_id=809772, novedades_ids=[17],
+                novedades_referencias=references, tipo_tarea_id=1,
+                descripcion="Revisar ambas novedades.",
+            ),
+            tipo_documento="CC", identificacion="5843452",
+        )
+        self.assertEqual(
+            [reference.model_dump() for reference in result.tarea.novedades_referencias],
+            references,
+        )
+        self.assertEqual(self.task_repository.create_task.call_args.kwargs["novedades_referencias"], references)
+
+    def test_assignment_rejects_reference_from_other_operator_or_source(self) -> None:
+        user_repository = Mock()
+        user_repository.get_by_identity.return_value = Mock(rol_id=2)
+        service = TareasService(self.task_repository, self.operator_repository, user_repository)
+        self.task_repository.get_operator_by_code.return_value = {"codigo": "809772"}
+        for rows in (
+            [{"categoria": "ico", "id_novedad": 17, "codigo": 123}],
+            [{"categoria": "inasistencias", "id_novedad": 17, "codigo": 809772}],
+            [],
+        ):
+            with self.subTest(rows=rows):
+                self.task_repository.list_assignable_novelties.return_value = rows
+                with self.assertRaises(HTTPException) as context:
+                    service.create_task_for_operator(
+                        self.db,
+                        request=TareaCreateRequest(
+                            operador_id=809772, novedades_ids=[17],
+                            novedades_referencias=[{"categoria": "ico", "id_novedad": 17}],
+                            tipo_tarea_id=1, descripcion="Revisar.",
+                        ),
+                        tipo_documento="CC", identificacion="5843452",
+                    )
+                self.assertEqual(context.exception.status_code, 422)
+        self.task_repository.create_task.assert_not_called()
+
+    def test_search_novelties_returns_all_categories_with_same_id(self) -> None:
+        user_repository = Mock()
+        user_repository.get_by_identity.return_value = Mock(rol_id=2)
+        service = TareasService(self.task_repository, self.operator_repository, user_repository)
+        self.task_repository.search_assignable_novelties.return_value = [
+            {
+                "id_novedad": 17, "categoria": category, "codigo": 809772,
+                "fecha_novedad": None, "tipo_novedad": "Tipo",
+                "descripcion": "Detalle", "estado": None,
+            }
+            for category in ("ico", "inasistencias")
+        ]
+        results = service.search_assignable_novelties(
+            self.db, novedad_id=17, tipo_documento="CC", identificacion="5843452",
+        )
+        self.assertEqual([item.categoria for item in results], ["ico", "inasistencias"])
+        self.task_repository.search_assignable_novelties.assert_called_once_with(self.db, novedad_id=17)
+
+    def test_operator_search_returns_both_categories_for_active_operator(self) -> None:
+        user_repository = Mock()
+        user_repository.get_by_identity.return_value = Mock(rol_id=1)
+        service = TareasService(self.task_repository, self.operator_repository, user_repository)
+        self.task_repository.get_operator_by_code.return_value = {"codigo": "809772"}
+        self.task_repository.list_assignable_novelties.return_value = [
+            {
+                "id_novedad": item_id, "categoria": category, "codigo": 809772,
+                "fecha_novedad": None, "tipo_novedad": "Tipo",
+                "descripcion": "Detalle", "estado": None,
+            }
+            for item_id, category in ((17, "ico"), (18, "inasistencias"))
+        ]
+        results = service.list_assignable_novelties(
+            self.db, codigo_operador=809772, tipo_documento="CC", identificacion="5843452",
+        )
+        self.assertEqual([(item.id_novedad, item.categoria) for item in results], [
+            (17, "ico"), (18, "inasistencias"),
+        ])
+        self.task_repository.list_assignable_novelties.assert_called_once_with(
+            self.db, codigo_operador=809772,
+        )
+
+    def test_assignment_rejects_inconsistent_or_duplicate_references(self) -> None:
+        for references in (
+            [{"categoria": "ico", "id_novedad": 18}],
+            [{"categoria": "ico", "id_novedad": 17}] * 2,
+        ):
+            with self.subTest(references=references), self.assertRaises(ValueError):
+                TareaCreateRequest(
+                    operador_id=809772, novedades_ids=[17],
+                    novedades_referencias=references, tipo_tarea_id=1,
+                    descripcion="Revisar.",
+                )
 
     def test_lists_only_tasks_for_authenticated_operator_code(self) -> None:
         self.task_repository.list_by_operator.return_value = [
@@ -272,16 +382,10 @@ class TareasServiceTests(unittest.TestCase):
             self.operator_repository,
             user_repository,
         )
+        evidence = [_evidence_record(f"foto{i}.jpg") for i in range(12)]
+        evidence += [_evidence_record(f"video{i}.mp4", tipo="video") for i in range(2)]
         self.task_repository.get_by_id.return_value = _task_record(
-            estado="EN_PROCESO",
-            evidencias=[
-                {
-                    "nombre": "foto.jpg",
-                    "ruta": "/EvidenciasAppMovil/1080017116/foto.jpg",
-                    "fecha": "2026-10-20",
-                    "tipo": "image",
-                }
-            ],
+            estado="EN_PROCESO", evidencias=evidence,
         )
         self.task_repository.update_state.return_value = _task_record(
             estado="COMPLETADA",
@@ -310,6 +414,26 @@ class TareasServiceTests(unittest.TestCase):
             operador_id=809772,
             estado="COMPLETADA",
         )
+
+    def test_completion_requires_both_evidence_quotas(self) -> None:
+        user_repository = Mock()
+        user_repository.get_by_identity.return_value = None
+        service = TareasService(self.task_repository, self.operator_repository, user_repository)
+        for photos, videos in [(11, 2), (12, 1), (0, 0)]:
+            with self.subTest(photos=photos, videos=videos):
+                evidence = [_evidence_record(f"foto{i}.jpg") for i in range(photos)]
+                evidence += [_evidence_record(f"video{i}.mp4", tipo="video") for i in range(videos)]
+                self.task_repository.get_by_id.return_value = _task_record(
+                    estado="EN_PROCESO", evidencias=evidence,
+                )
+                with self.assertRaises(HTTPException) as context:
+                    service.update_state(
+                        self.db, tarea_id=1, estado="COMPLETADA",
+                        tipo_documento="CC", identificacion="1080017116",
+                    )
+                self.assertEqual(context.exception.status_code, 409)
+                self.assertIn(f"Fotos {photos}/12 - Videos {videos}/2", context.exception.detail)
+        self.task_repository.update_state.assert_not_called()
 
     def test_upload_stores_file_and_moves_pending_task_to_in_progress(self) -> None:
         pending_task = _task_record(estado="PENDIENTE")

@@ -30,8 +30,8 @@ export function TaskAssignmentSection() {
   const [searchText, setSearchText] = useState('');
   const [operator, setOperator] = useState<AssignableOperator | null>(null);
   const [directNovelty, setDirectNovelty] = useState<AssignableNovelty | null>(null);
-  const [selectedNoveltyIds, setSelectedNoveltyIds] = useState<number[]>([]);
-  const [expandedNoveltyIds, setExpandedNoveltyIds] = useState<number[]>([]);
+  const [selectedNoveltyIds, setSelectedNoveltyIds] = useState<string[]>([]);
+  const [expandedNoveltyIds, setExpandedNoveltyIds] = useState<string[]>([]);
   const [selectedTypeId, setSelectedTypeId] = useState<number | null>(null);
   const [description, setDescription] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -62,17 +62,9 @@ export function TaskAssignmentSection() {
   });
   const noveltySearch = useMutation({
     mutationFn: tareasService.getNovelty,
-    onSuccess: (novelty) => {
+    onSuccess: (novelties) => {
       setErrorMessage(null);
-      setOperator({
-        codigo: String(novelty.codigo),
-        tipo_documento: novelty.tipo_documento ?? '',
-        identificacion: novelty.identificacion ?? '',
-        nombre_completo: novelty.nombre_completo ?? 'Operador',
-      });
-      setDirectNovelty(novelty);
-      setSelectedNoveltyIds([novelty.id_novedad]);
-      setFeedback(null);
+      setFeedback(novelties.length === 0 ? 'No encontramos ICO ni inasistencias con ese ID.' : null);
     },
     onError: (error: unknown) => {
       setErrorMessage(getApiErrorMessage(error, 'No fue posible buscar la novedad.'));
@@ -83,9 +75,17 @@ export function TaskAssignmentSection() {
       if (!operator || selectedTypeId === null) {
         throw new Error('Selecciona el operador y el tipo de tarea.');
       }
+      const available = directNovelty ? [directNovelty] : noveltiesQuery.data ?? [];
+      const references = available
+        .filter((novelty) => selectedNoveltyIds.includes(noveltyKey(novelty)))
+        .map(({ categoria, id_novedad }) => ({ categoria, id_novedad }));
+      if (references.length !== selectedNoveltyIds.length) {
+        throw new Error('Las novedades seleccionadas cambiaron. Vuelve a seleccionarlas.');
+      }
       return tareasService.createAssignment({
         operador_id: Number(operator.codigo),
-        novedades_ids: selectedNoveltyIds,
+        novedades_ids: [...new Set(references.map((item) => item.id_novedad))],
+        novedades_referencias: references,
         tipo_tarea_id: selectedTypeId,
         descripcion: description.trim(),
       });
@@ -115,8 +115,10 @@ export function TaskAssignmentSection() {
 
   const search = () => {
     const term = searchText.trim();
-    if (term.length < 2) {
-      setErrorMessage('Escribe al menos dos caracteres para buscar.');
+    if (!term || (searchMode === 'operador' && term.length < 2)) {
+      setErrorMessage(searchMode === 'operador'
+        ? 'Escribe al menos dos caracteres para buscar.'
+        : 'Escribe el ID de la novedad.');
       return;
     }
     setErrorMessage(null);
@@ -142,7 +144,19 @@ export function TaskAssignmentSection() {
     setFeedback(null);
   };
 
-  const toggleNovelty = (noveltyId: number) => {
+  const chooseNovelty = (novelty: AssignableNovelty) => {
+    setOperator({
+      codigo: String(novelty.codigo),
+      tipo_documento: novelty.tipo_documento ?? '',
+      identificacion: novelty.identificacion ?? '',
+      nombre_completo: novelty.nombre_completo ?? 'Operador',
+    });
+    setDirectNovelty(novelty);
+    setSelectedNoveltyIds([noveltyKey(novelty)]);
+    setFeedback(null);
+  };
+
+  const toggleNovelty = (noveltyId: string) => {
     setSelectedNoveltyIds((selected) =>
       selected.includes(noveltyId)
         ? selected.filter((id) => id !== noveltyId)
@@ -150,7 +164,7 @@ export function TaskAssignmentSection() {
     );
   };
 
-  const toggleNoveltyDetails = (noveltyId: number) => {
+  const toggleNoveltyDetails = (noveltyId: string) => {
     setExpandedNoveltyIds((expanded) =>
       expanded.includes(noveltyId)
         ? expanded.filter((id) => id !== noveltyId)
@@ -243,6 +257,26 @@ export function TaskAssignmentSection() {
         </View>
       ) : null}
 
+      {operator === null && noveltySearch.data?.length ? (
+        <View style={styles.resultCard}>
+          <Text style={styles.cardTitle}>Resultados de novedades</Text>
+          {noveltySearch.data.map((novelty) => (
+            <Pressable key={`${noveltyKey(novelty)}:${novelty.codigo}`} accessibilityRole="button"
+              onPress={() => chooseNovelty(novelty)} style={styles.operatorResult}>
+              <View style={styles.resultCopy}>
+                <Text style={styles.operatorName}>
+                  {novelty.categoria === 'ico' ? 'ICO' : 'Inasistencia'} #{novelty.id_novedad}
+                </Text>
+                <Text style={styles.secondaryText}>
+                  {novelty.nombre_completo ?? 'Operador'} · Código {novelty.codigo}
+                </Text>
+              </View>
+              <Text style={styles.arrow}>›</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
       {operator ? (
         <View style={styles.resultCard}>
           <View style={styles.selectedOperator}>
@@ -267,14 +301,14 @@ export function TaskAssignmentSection() {
             </Pressable>
           </View>
 
-          <Text style={styles.cardTitle}>Novedades abiertas</Text>
+          <Text style={styles.cardTitle}>Novedades disponibles</Text>
           {directNovelty ? (
             <NoveltyRow
               novelty={directNovelty}
-              selected={selectedNoveltyIds.includes(directNovelty.id_novedad)}
-              onPress={() => toggleNovelty(directNovelty.id_novedad)}
-              expanded={expandedNoveltyIds.includes(directNovelty.id_novedad)}
-              onToggleExpanded={() => toggleNoveltyDetails(directNovelty.id_novedad)}
+              selected={selectedNoveltyIds.includes(noveltyKey(directNovelty))}
+              onPress={() => toggleNovelty(noveltyKey(directNovelty))}
+              expanded={expandedNoveltyIds.includes(noveltyKey(directNovelty))}
+              onToggleExpanded={() => toggleNoveltyDetails(noveltyKey(directNovelty))}
             />
           ) : noveltiesQuery.isLoading ? (
             <ActivityIndicator color={colors.primary} style={styles.loader} />
@@ -289,18 +323,18 @@ export function TaskAssignmentSection() {
                 .sort(compareNoveltyDates)
                 .map((novelty) => (
                   <NoveltyRow
-                    key={novelty.id_novedad}
+                    key={noveltyKey(novelty)}
                     novelty={novelty}
-                    selected={selectedNoveltyIds.includes(novelty.id_novedad)}
-                    onPress={() => toggleNovelty(novelty.id_novedad)}
-                    expanded={expandedNoveltyIds.includes(novelty.id_novedad)}
-                    onToggleExpanded={() => toggleNoveltyDetails(novelty.id_novedad)}
+                    selected={selectedNoveltyIds.includes(noveltyKey(novelty))}
+                    onPress={() => toggleNovelty(noveltyKey(novelty))}
+                    expanded={expandedNoveltyIds.includes(noveltyKey(novelty))}
+                    onToggleExpanded={() => toggleNoveltyDetails(noveltyKey(novelty))}
                   />
                 ))}
             </ScrollView>
           ) : (
             <Text style={styles.secondaryText}>
-              Este operador no tiene novedades abiertas para asociar.
+              Este operador no tiene ICO ni inasistencias disponibles para asociar.
             </Text>
           )}
 
@@ -447,13 +481,13 @@ function NoveltyRow({
             {selected ? <Text style={styles.checkmark}>✓</Text> : null}
           </View>
           <View style={styles.noveltyCopy}>
-            <Text style={styles.noveltyTitle}>Novedad #{novelty.id_novedad}</Text>
+            <Text style={styles.noveltyTitle}>{novelty.categoria === 'ico' ? 'ICO' : 'Inasistencia'} #{novelty.id_novedad}</Text>
             <Text numberOfLines={2} style={styles.secondaryText}>
               {novelty.tipo_novedad ?? 'Novedad'} ·{' '}
               {formatNoveltyDate(novelty.fecha_novedad)}
             </Text>
           </View>
-          <Text style={styles.noveltyStatus}>{novelty.estado ?? 'ABIERTA'}</Text>
+          {novelty.categoria !== 'ico' ? <Text style={styles.noveltyStatus}>{novelty.estado ?? 'Sin estado'}</Text> : null}
         </Pressable>
         <Pressable
           accessibilityLabel={expanded ? 'Ocultar detalle de novedad' : 'Ver detalle de novedad'}
@@ -475,11 +509,15 @@ function NoveltyRow({
           <DetailField label="Código" value={novelty.codigo} />
           <DetailField label="Tipo de novedad" value={novelty.tipo_novedad} />
           <DetailField label="Descripción" value={novelty.descripcion} />
-          <DetailField label="Estado" value={novelty.estado} />
+          {novelty.categoria !== 'ico' ? <DetailField label="Estado" value={novelty.estado} /> : null}
         </View>
       ) : null}
     </View>
   );
+}
+
+function noveltyKey(novelty: AssignableNovelty): string {
+  return `${novelty.categoria}:${novelty.id_novedad}`;
 }
 
 function DetailField({ label, value }: { label: string; value: string | number | null | undefined }) {

@@ -81,8 +81,8 @@ class ExpoPushClient:
         body = f"La tarea #{task_id} fue {status_label}."
         if status == "completada":
             body += (
-                " Revisa las evidencias que dejó el operador y realiza el "
-                "Cierre en SICO de la/s novedad/es."
+                " Revisa las evidencias que dejó el operador y gestiona "
+                "las novedades en la plataforma correspondiente."
             )
         return self._send_message(
             token,

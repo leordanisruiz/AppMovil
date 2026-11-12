@@ -167,9 +167,7 @@ export function CreatedTasksSection({ initialStatusFilter = 'TODAS' }: { initial
               </Text>
               {closedTask?.novedades_ids.length ? (
                 <Text style={styles.successFollowUp}>
-                  Por favor, recuerda realizar el cierre de la novedad/es{' '}
-                  {closedTask.novedades_ids.map((id) => `#${id}`).join(', ')} en la
-                  {' '}plataforma de <Text style={styles.successFollowUpBold}>SICO</Text>.
+                  Por favor, recuerda gestionar las novedades relacionadas en la plataforma correspondiente.
                 </Text>
               ) : null}
               <AppButton
@@ -381,13 +379,19 @@ function CreatedTaskDetail({
 
       <View style={styles.detailCard}>
         <Text style={styles.cardTitle}>
-          Novedades relacionadas ({task.novedades_ids.length})
+          Novedades relacionadas ({task.novedades_referencias?.length || task.novedades_ids.length})
         </Text>
         {task.novedades_ids.length ? (
           <View style={styles.noveltyList}>
-            {task.novedades_ids.map((noveltyId) => (
-              <View key={noveltyId} style={styles.noveltyChip}>
-                <Text style={styles.noveltyText}>Novedad #{noveltyId}</Text>
+            {(task.novedades_referencias?.length
+              ? task.novedades_referencias.map((item) => ({
+                  key: `${item.categoria}:${item.id_novedad}`,
+                  label: `${item.categoria === 'ico' ? 'ICO' : 'Inasistencia'} #${item.id_novedad}`,
+                }))
+              : task.novedades_ids.map((id) => ({ key: String(id), label: `Novedad #${id}` }))
+            ).map((novelty) => (
+              <View key={novelty.key} style={styles.noveltyChip}>
+                <Text style={styles.noveltyText}>{novelty.label}</Text>
               </View>
             ))}
           </View>
@@ -516,9 +520,14 @@ function getStatusLabel(status: TaskStatus): string {
 }
 
 function getClosedMessage(task: OperatorTask): string {
-  const noveltyNumbers = task.novedades_ids.map((id) => `#${id}`).join(', ');
+  const noveltyNumbers = task.novedades_referencias?.length
+    ? task.novedades_referencias.map((item) =>
+        `${item.categoria === 'ico' ? 'ICO' : 'Inasistencia'} #${item.id_novedad}`,
+      ).join(', ')
+    : task.novedades_ids.map((id) => `#${id}`).join(', ');
+  const noveltyCount = task.novedades_referencias?.length || task.novedades_ids.length;
   return noveltyNumbers
-    ? `La tarea #${task.id} quedó en estado CERRADO. Novedad${task.novedades_ids.length > 1 ? 'es asociadas' : ' asociada'}: ${noveltyNumbers}.`
+    ? `La tarea #${task.id} quedó en estado CERRADO. Novedad${noveltyCount > 1 ? 'es asociadas' : ' asociada'}: ${noveltyNumbers}.`
     : `La tarea #${task.id} quedó en estado CERRADO.`;
 }
 

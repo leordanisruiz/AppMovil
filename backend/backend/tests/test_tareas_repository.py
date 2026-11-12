@@ -9,6 +9,24 @@ from app.repositories.tareas_repository import TareasRepository
 
 
 class TareasRepositoryTests(unittest.TestCase):
+    def test_assignment_queries_cover_both_sources_and_bind_search(self) -> None:
+        db = Mock()
+        db.execute.return_value.mappings.return_value.all.return_value = []
+        repository = TareasRepository()
+        for method, argument, parameter in (
+            (repository.list_assignable_novelties, {"codigo_operador": 809772}, "codigo_operador"),
+            (repository.search_assignable_novelties, {"novedad_id": 17}, "novedad_id"),
+        ):
+            method(cast(Session, db), **argument)
+            statement, params = db.execute.call_args.args
+            sql = str(statement)
+            self.assertIn('"DW_SUMA"."FactICO"', sql)
+            self.assertIn('"DW_SUMA"."FactNovedadesSico"', sql)
+            self.assertIn("fi.\"TipoNovedad\" <> 'I5025'", sql)
+            self.assertIn('fns."Grupo" LIKE \'%Inasistencia%\'', sql)
+            self.assertIn('fns."Estado" IN (\'PEOCESO\', \'PROCESO\')', sql)
+            self.assertEqual(params, {parameter: argument[parameter]})
+
     def test_operator_search_casts_searchable_identifiers_to_text(self) -> None:
         expected_rows: list[dict[str, Any]] = [
             {"codigo": "809772", "identificacion": "809772"},

@@ -32,7 +32,7 @@ import {
   syncAppBadge,
 } from '../services/notificationService';
 import { registerDeviceForPushNotifications } from '../services/pushTokenService';
-import type { Novedad } from '../types/novedad';
+import type { CategoriaNovedad, Novedad, NovedadesResumen } from '../types/novedad';
 import { useAuth } from '../store/AuthProvider';
 import { colors, radius, spacing, typography } from '../theme';
 import { getFirstName } from '../utils/formatName';
@@ -93,6 +93,12 @@ const sectionTitles: Record<PortalSection, string> = {
 };
 
 const appVersion = Constants.expoConfig?.version ?? '1.1.4';
+const noveltyCategories: { id: CategoriaNovedad; label: string }[] = [
+  { id: 'ico', label: 'ICO' },
+  { id: 'isv', label: 'ISV' },
+  { id: 'inasistencias', label: 'Inasistencias' },
+  { id: 'danos', label: 'Daños operativos' },
+];
 
 export function HomeScreen() {
   const { width } = useWindowDimensions();
@@ -103,6 +109,7 @@ export function HomeScreen() {
   const navigation = useNavigation();
   const operatorCode = operator?.codigo?.trim() || null;
   const canAssignTasks = operator?.rolId === 1 || operator?.rolId === 2;
+  const canViewNovelties = Boolean(operatorCode) && !canAssignTasks;
   const canRegisterPush = Boolean(operatorCode) || canAssignTasks;
   const {
     data: novedades,
@@ -110,7 +117,7 @@ export function HomeScreen() {
     isError,
     refetch,
     isRefetching,
-  } = useNovedades(operatorCode);
+  } = useNovedades(canViewNovelties ? operatorCode : null);
   const tareasQuery = useTareas(Boolean(operatorCode));
   const taskCountQuery = useTareasResumen(Boolean(operatorCode));
   const notClosedTaskCount = taskCountQuery.data ?? tareasQuery.data?.filter(
@@ -125,6 +132,7 @@ export function HomeScreen() {
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<PortalSection>('inicio');
+  const [noveltyCategory, setNoveltyCategory] = useState<CategoriaNovedad | null>(null);
   const [taskInitialFilter, setTaskInitialFilter] = useState<'TODAS' | TaskStatus>('TODAS');
   const backSwipe = useMemo(
     () =>
@@ -147,7 +155,7 @@ export function HomeScreen() {
   const firstName = operator?.nombreCompleto
     ? getFirstName(operator.nombreCompleto)
     : 'Operador';
-  const welcomeNotice: WelcomeNoticeContent | null = !operatorCode
+  const welcomeNotice: WelcomeNoticeContent | null = !canViewNovelties
     ? {
         title: 'Bienvenido a la app de SUMA',
         message: 'Donde encontraras a la mano las soluciones necesarias.',
@@ -164,7 +172,9 @@ export function HomeScreen() {
       : !isLoading && novedades?.total === 0
         ? {
             title: 'Bienvenido a la app de SUMA para Operadores',
-            message: 'Te felicitamos por tu buen comportamiento, no tienes novedades.',
+            intro: 'Le contamos que cuenta con',
+            message: 'No tienes ICO ni inasistencias para consultar.',
+            noveltyCount: 0,
             taskCount: notClosedTaskCount,
           }
         : null;
@@ -212,6 +222,8 @@ export function HomeScreen() {
 
   useEffect(() => {
     const openNovedades = () => {
+      if (!canViewNovelties) return;
+      setNoveltyCategory(null);
       setActiveSection('novedades');
       setIsMenuOpen(false);
     };
@@ -233,7 +245,7 @@ export function HomeScreen() {
       refreshHomeData,
       openTasks,
     );
-  }, [operatorCode]);
+  }, [operatorCode, canViewNovelties]);
 
   const handleLogout = async () => {
     setLogoutError(null);
@@ -276,10 +288,14 @@ export function HomeScreen() {
   const visibleMenuItems = menuItems.filter(
     (item) =>
       (item.value !== 'asignacion-tareas' || canAssignTasks) &&
+      (item.value !== 'novedades' || canViewNovelties) &&
       (item.value !== 'tareas' || !canAssignTasks) &&
       (item.value !== 'tareas-creadas' || canAssignTasks),
   );
   const dashboardTasks = canAssignTasks ? createdTasksQuery.data : tareasQuery.data;
+  const activeSectionTitle = activeSection === 'novedades' && noveltyCategory
+    ? noveltyCategories.find((item) => item.id === noveltyCategory)?.label ?? 'Novedades'
+    : sectionTitles[activeSection];
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
@@ -289,10 +305,13 @@ export function HomeScreen() {
         desktop={isDesktop}
         items={visibleMenuItems}
         onLogout={handleLogout}
-        onSelect={(section) => selectSection(section as PortalSection)}
+        onSelect={(section) => {
+          if (section === 'novedades') setNoveltyCategory(null);
+          selectSection(section as PortalSection);
+        }}
         operatorName={operator?.nombreCompleto ?? 'Operador'}
         tablet={isTablet}
-        title={sectionTitles[activeSection]}
+        title={activeSectionTitle}
       >
       <View style={[styles.appShell, isDesktop && styles.desktopShell]} {...(isDesktop ? {} : backSwipe.panHandlers)}>
         <ScrollView
@@ -339,7 +358,7 @@ export function HomeScreen() {
 
           <View style={[styles.pageHeading, isDesktop && styles.desktopHidden]}>
             <Text style={styles.pageEyebrow}>PORTAL DEL OPERADOR</Text>
-            <Text style={styles.pageTitle}>{sectionTitles[activeSection]}</Text>
+            <Text style={styles.pageTitle}>{activeSectionTitle}</Text>
           </View>
 
           <Modal
@@ -375,11 +394,9 @@ export function HomeScreen() {
                   <View style={styles.welcomeNoticeCounts}>
                     {welcomeNotice.noveltyCount !== undefined ? (
                       <View style={styles.welcomeNoticeCount}>
-                        <Text style={styles.welcomeNoticeCountNumber}>
-                          {welcomeNotice.noveltyCount}
-                        </Text>
+                        <Text style={styles.welcomeNoticeCountNumber}>{welcomeNotice.noveltyCount}</Text>
                         <Text style={styles.welcomeNoticeCountLabel}>
-                          novedades abiertas
+                          {welcomeNotice.noveltyCount === 1 ? 'Novedad' : 'Novedades'}
                         </Text>
                       </View>
                     ) : null}
@@ -421,11 +438,12 @@ export function HomeScreen() {
                   pending={dashboardTasks?.filter((task) => task.estado === 'PENDIENTE').length ?? 0}
                   inProgress={dashboardTasks?.filter((task) => task.estado === 'EN_PROCESO').length ?? 0}
                   completed={dashboardTasks?.filter((task) => task.estado === 'COMPLETADA').length ?? 0}
-                  novelties={novedades?.total ?? 0}
+                  novelties={novedades}
+                  showNovelties={canViewNovelties}
                   evidenceCount={dashboardTasks?.reduce((sum, task) => sum + task.evidencias.length, 0) ?? 0}
                   closed={dashboardTasks?.filter((task) => task.estado === 'CERRADO').length ?? 0}
                   onTasks={openTasksWithFilter}
-                  onNovelties={() => selectSection('novedades')}
+                  onNovelties={(category) => { setNoveltyCategory(category); selectSection('novedades'); }}
                   onEvidence={() => selectSection('evidencias')}
                   loading={(canAssignTasks ? createdTasksQuery.isLoading : tareasQuery.isLoading) || isLoading}
                 />
@@ -468,6 +486,16 @@ export function HomeScreen() {
                   </Pressable>
                 ) : (
                   <>
+                    {operatorCode ? noveltyCategories.map(({ id, label }) => (
+                      <Pressable key={id} accessibilityRole="button"
+                        onPress={() => { setNoveltyCategory(id); selectSection('novedades'); }}
+                        style={styles.summaryCard}>
+                        <View style={styles.summaryIcon}><Text style={styles.summaryIconText}>↗</Text></View>
+                        <Text style={styles.summaryLabel}>{label}</Text>
+                        <Text style={styles.summaryValue}>{categoryCount(novedades, id)}</Text>
+                        <Text style={styles.summaryFootnote}>{id === 'isv' || id === 'danos' ? 'Pendiente' : 'Ver avisos'}</Text>
+                      </Pressable>
+                    )) : null}
                     <Pressable
                       accessibilityRole="button"
                       onPress={() => selectSection('tareas')}
@@ -482,22 +510,6 @@ export function HomeScreen() {
                       </Text>
                       <Text style={styles.summaryFootnote}>
                         Actividades asignadas
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => selectSection('novedades')}
-                      style={styles.summaryCard}
-                    >
-                      <View style={styles.summaryIcon}>
-                        <Text style={styles.summaryIconText}>↗</Text>
-                      </View>
-                      <Text style={styles.summaryLabel}>Novedades</Text>
-                      <Text style={styles.summaryValue}>
-                        {novedades?.total ?? '—'}
-                      </Text>
-                      <Text style={styles.summaryFootnote}>
-                        Ver todos los avisos
                       </Text>
                     </Pressable>
                   </>
@@ -527,17 +539,27 @@ export function HomeScreen() {
             </View>
           ) : null}
 
-          {activeSection === 'novedades' ? (
+          {activeSection === 'novedades' && canViewNovelties ? (
             <View style={styles.sectionContent}>
               <SectionHeading
-                title="Comunicados para ti"
+                title={noveltyCategories.find((item) => item.id === noveltyCategory)?.label ?? 'Novedades'}
                 supportingText="Información importante para tu operación."
               />
+              {!noveltyCategory ? <View style={styles.summaryRow}>
+                {noveltyCategories.map(({ id, label }) => (
+                  <Pressable key={id} accessibilityRole="button" onPress={() => setNoveltyCategory(id)} style={styles.summaryCard}>
+                    <Text style={styles.summaryLabel}>{label}</Text>
+                    <Text style={styles.summaryValue}>{categoryCount(novedades, id)}</Text>
+                  </Pressable>
+                ))}
+              </View> : null}
               <View style={styles.newsOverview}>
                 <View>
-                  <Text style={styles.newsOverviewLabel}>NOVEDADES ABIERTAS</Text>
+                  <Text style={styles.newsOverviewLabel}>
+                    {noveltyCategory ? activeSectionTitle.toUpperCase() : 'NOVEDADES ABIERTAS'}
+                  </Text>
                   <Text style={styles.newsOverviewCount}>
-                    {novedades?.total ?? '—'}
+                    {noveltyCategory ? categoryCount(novedades, noveltyCategory) : novedades?.total ?? '—'}
                   </Text>
                 </View>
               </View>
@@ -555,8 +577,12 @@ export function HomeScreen() {
                     <Text style={styles.retryText}>Reintentar</Text>
                   </Pressable>
                 </View>
-              ) : novedades?.novedades.length ? (
-                <NovedadesTable rows={novedades.novedades} />
+              ) : noveltyCategory === 'isv' || noveltyCategory === 'danos' ? (
+                <View style={styles.feedbackCard}><Text style={styles.feedbackText}>Consulta pendiente de configuración.</Text></View>
+              ) : !noveltyCategory ? (
+                <View style={styles.feedbackCard}><Text style={styles.feedbackText}>Selecciona una categoría para consultar sus novedades.</Text></View>
+              ) : novedades?.categorias[noveltyCategory].novedades.length ? (
+                <NovedadesTable key={noveltyCategory} rows={novedades.categorias[noveltyCategory].novedades} isIco={noveltyCategory === 'ico'} />
               ) : (
                 <View style={styles.feedbackCard}>
                   <Text style={styles.emptyTitle}>Todo al día</Text>
@@ -675,6 +701,7 @@ export function HomeScreen() {
                 .filter(
                   (item) =>
                     (item.value !== 'asignacion-tareas' || canAssignTasks) &&
+                    (item.value !== 'novedades' || canViewNovelties) &&
                     (item.value !== 'tareas' || !canAssignTasks) &&
                     (item.value !== 'tareas-creadas' || canAssignTasks),
                 )
@@ -683,7 +710,10 @@ export function HomeScreen() {
                   accessibilityRole="button"
                   accessibilityState={{ selected: activeSection === item.value }}
                   key={item.value}
-                  onPress={() => selectSection(item.value)}
+                  onPress={() => {
+                    if (item.value === 'novedades') setNoveltyCategory(null);
+                    selectSection(item.value);
+                  }}
                   style={[
                     styles.menuItem,
                     activeSection === item.value && styles.menuItemActive,
@@ -763,23 +793,30 @@ export function HomeScreen() {
 }
 
 function DesktopDashboard({
-  firstName, pending, inProgress, completed, closed, novelties, evidenceCount, onTasks, onNovelties, onEvidence, loading,
+  firstName, pending, inProgress, completed, closed, novelties, showNovelties, evidenceCount, onTasks, onNovelties, onEvidence, loading,
 }: {
-  firstName: string; pending: number; inProgress: number; completed: number; closed: number; novelties: number;
-  evidenceCount: number; onTasks: (filter: 'TODAS' | TaskStatus) => void; onNovelties: () => void; onEvidence: () => void; loading: boolean;
+  firstName: string; pending: number; inProgress: number; completed: number; closed: number; novelties: NovedadesResumen | undefined;
+  showNovelties: boolean;
+  evidenceCount: number; onTasks: (filter: 'TODAS' | TaskStatus) => void; onNovelties: (category: CategoriaNovedad) => void; onEvidence: () => void; loading: boolean;
 }) {
-  const metrics = [
+  const noveltyMetrics = noveltyCategories.map(({ id, label }) => ({
+    label, value: categoryCount(novelties, id), icon: '↗', tone: '#FFF0F0', action: () => onNovelties(id),
+  }));
+  const taskMetrics = [
     { label: 'Tareas pendientes', value: pending, icon: '◷', tone: '#FFF4E5', action: () => onTasks('PENDIENTE') },
     { label: 'En proceso', value: inProgress, icon: '↻', tone: '#EEF5FF', action: () => onTasks('EN_PROCESO') },
     { label: 'Completadas', value: completed, icon: '✓', tone: '#EAF7EF', action: () => onTasks('COMPLETADA') },
     { label: 'Cerradas', value: closed, icon: '✓', tone: '#EEF1F4', action: () => onTasks('CERRADO') },
-    { label: 'Novedades activas', value: novelties, icon: '↗', tone: '#FFF0F0', action: onNovelties },
     { label: 'Evidencias cargadas', value: evidenceCount, icon: '▧', tone: '#F2EEFF', action: onEvidence },
   ];
   return (
     <View style={styles.dashboard}>
       <View style={styles.dashboardIntro}><View><Text style={styles.dashboardEyebrow}>PANEL DE CONTROL</Text><Text style={styles.dashboardTitle}>Hola, {firstName}</Text><Text style={styles.dashboardCopy}>Estado actual de tu operación y actividad asignada.</Text></View><View style={styles.dashboardDate}><Text style={styles.dashboardDateLabel}>HOY</Text><Text style={styles.dashboardDateValue}>{new Intl.DateTimeFormat('es-CO', { dateStyle: 'long' }).format(new Date())}</Text></View></View>
-      <View style={styles.metricGrid}>{metrics.map((metric) => <Pressable key={metric.label} accessibilityRole="button" onPress={metric.action} style={styles.metricCard}><View style={[styles.metricIcon, { backgroundColor: metric.tone }]}><Text style={styles.metricIconText}>{metric.icon}</Text></View><Text style={styles.metricLabel}>{metric.label}</Text><Text style={styles.metricValue}>{loading ? '—' : metric.value}</Text><Text style={styles.metricLink}>Ver detalle  ›</Text></Pressable>)}</View>
+      {(showNovelties ? [noveltyMetrics, taskMetrics] : [taskMetrics]).map((metrics) => (
+        <View key={metrics === noveltyMetrics ? 'novedades' : 'tareas'} style={styles.metricGrid}>
+          {metrics.map((metric) => <Pressable key={metric.label} accessibilityRole="button" onPress={metric.action} style={styles.metricCard}><View style={[styles.metricIcon, { backgroundColor: metric.tone }]}><Text style={styles.metricIconText}>{metric.icon}</Text></View><Text style={styles.metricLabel}>{metric.label}</Text><Text style={styles.metricValue}>{loading ? '—' : metric.value}</Text><Text style={styles.metricLink}>Ver detalle  ›</Text></Pressable>)}
+        </View>
+      ))}
       <View style={styles.dashboardHint}><Text style={styles.dashboardHintIcon}>✦</Text><View style={{ flex: 1 }}><Text style={styles.dashboardHintTitle}>Tu espacio de trabajo</Text><Text style={styles.dashboardHintCopy}>Consulta tareas, novedades y evidencias desde el menú lateral.</Text></View></View>
     </View>
   );
@@ -794,7 +831,12 @@ function ProfileRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function NovedadesTable({ rows }: { rows: Novedad[] }) {
+function categoryCount(resumen: NovedadesResumen | undefined, category: CategoriaNovedad): number | string {
+  if (category === 'isv' || category === 'danos') return 'Pendiente';
+  return resumen?.categorias[category].total ?? '—';
+}
+
+function NovedadesTable({ rows, isIco }: { rows: Novedad[]; isIco: boolean }) {
   const pageSize = 5;
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedNovelty, setSelectedNovelty] = useState<Novedad | null>(null);
@@ -809,10 +851,10 @@ function NovedadesTable({ rows }: { rows: Novedad[] }) {
         <View style={styles.tableHeaderRow}>
           <Text style={[styles.tableHeaderCell, styles.idColumn]}>ID</Text>
           <Text style={[styles.tableHeaderCell, styles.dateColumn]}>Fecha</Text>
-          <Text style={[styles.tableHeaderCell, styles.statusColumn]}>Estado</Text>
+          <Text style={[styles.tableHeaderCell, styles.statusColumn]}>{isIco ? 'Tipo novedad' : 'Estado'}</Text>
         </View>
         {pageRows.map((novedad, index) => {
-          const status = novedad.Estado?.trim() || 'Sin estado';
+          const status = (isIco ? novedad.TipoNovedad : novedad.Estado)?.trim() || 'Sin información';
           const isOpenStatus = /^(ABIERTO|ABIERTA|EN PROCESO|PROCESO)$/i.test(status);
 
           return (
@@ -919,10 +961,14 @@ function NovedadesTable({ rows }: { rows: Novedad[] }) {
                 <>
                   <NoveltyDetail label="ID Novedad" value={String(selectedNovelty.IdNovedad)} />
                   <NoveltyDetail label="Fecha Novedad" value={formatNoveltyDate(selectedNovelty.FechaNovedad)} />
-                  <NoveltyDetail label="Estado" value={selectedNovelty.Estado} />
+                  {!isIco ? <NoveltyDetail label="Estado" value={selectedNovelty.Estado} /> : null}
                   <NoveltyDetail label="Tipo Novedad" value={selectedNovelty.TipoNovedad} />
-                  <NoveltyDetail label="Grupo" value={selectedNovelty.Grupo} />
-                  <NoveltyDetail label="Subgrupo" value={selectedNovelty.Subgrupo} />
+                  {!isIco ? (
+                    <>
+                      <NoveltyDetail label="Grupo" value={selectedNovelty.Grupo} />
+                      <NoveltyDetail label="Subgrupo" value={selectedNovelty.Subgrupo} />
+                    </>
+                  ) : null}
                   <NoveltyDetail label="Descripción" value={selectedNovelty.Descripcion} />
                 </>
               ) : null}
@@ -1005,8 +1051,8 @@ const styles = StyleSheet.create({
   dashboardDate: { alignItems: 'flex-end', backgroundColor: '#FFFFFF', borderColor: '#E7EAEE', borderRadius: radius.medium, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 11 },
   dashboardDateLabel: { color: '#929AA4', fontSize: 9, fontWeight: '800', letterSpacing: 1 },
   dashboardDateValue: { color: '#434B54', fontSize: 12, fontWeight: '700', marginTop: 4 },
-  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
-  metricCard: { backgroundColor: '#FFFFFF', borderColor: '#E7EAEE', borderRadius: 13, borderWidth: 1, flexBasis: 170, flexGrow: 1, gap: 8, minHeight: 156, padding: 16 },
+  metricGrid: { flexDirection: 'row', gap: 14 },
+  metricCard: { backgroundColor: '#FFFFFF', borderColor: '#E7EAEE', borderRadius: 13, borderWidth: 1, flex: 1, gap: 8, minWidth: 0, minHeight: 156, padding: 16 },
   metricIcon: { alignItems: 'center', borderRadius: 10, height: 34, justifyContent: 'center', width: 34 },
   metricIconText: { color: '#474E57', fontSize: 16, fontWeight: '800' },
   metricLabel: { color: '#707983', fontSize: 11, fontWeight: '700' },
@@ -1252,6 +1298,7 @@ const styles = StyleSheet.create({
   },
   summaryRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.medium,
   },
   summaryCard: {
@@ -1260,6 +1307,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.medium,
     borderWidth: 1,
     flex: 1,
+    minWidth: '40%',
     gap: spacing.xsmall,
     minHeight: 150,
     padding: spacing.medium,

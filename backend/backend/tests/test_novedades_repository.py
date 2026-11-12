@@ -38,6 +38,27 @@ class NovedadesRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(parameters, {"codigo_operador": 809772})
 
+    def test_category_queries_bind_operator_and_apply_required_filters(self) -> None:
+        db = Mock()
+        db.execute.return_value.mappings.return_value.all.return_value = []
+        repository = NovedadesRepository()
+        repository.list_by_category(cast(Session, db), codigo_operador=810539, categoria="ico")
+        statement, parameters = db.execute.call_args.args
+        sql = str(statement)
+        self.assertIn('"DW_SUMA"."FactICO"', sql)
+        self.assertIn("NOT IN ('VEHICULOS', 'VEHÍCULOS')", sql)
+        self.assertIn("fi.\"TipoNovedad\" <> 'I5025'", sql)
+        self.assertIn("REGEXP_REPLACE", sql)
+        self.assertEqual(parameters, {"codigo_operador": 810539})
+
+        repository.list_by_category(cast(Session, db), codigo_operador=807277, categoria="inasistencias")
+        statement, parameters = db.execute.call_args.args
+        sql = str(statement)
+        self.assertIn('"DW_SUMA"."FactNovedadesSico"', sql)
+        self.assertIn('fns."Grupo" LIKE \'%Inasistencia%\'', sql)
+        self.assertIn('fns."Estado" IN (\'PEOCESO\', \'PROCESO\')', sql)
+        self.assertEqual(parameters, {"codigo_operador": 807277})
+
 
 if __name__ == "__main__":
     unittest.main()

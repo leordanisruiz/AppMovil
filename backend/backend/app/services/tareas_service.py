@@ -158,6 +158,28 @@ class TareasService:
             )
         return NovedadAsignacion.model_validate(dict(row))
 
+    def list_assignable_novelties(
+        self, db: Session, *, codigo_operador: int, tipo_documento: str, identificacion: str
+    ) -> list[NovedadAsignacion]:
+        self._require_assignment_role(db, tipo_documento=tipo_documento, identificacion=identificacion)
+        try:
+            if self._tareas_repository.get_operator_by_code(db, codigo_operador=codigo_operador) is None:
+                raise HTTPException(status_code=404, detail="No se encontró un operador activo con ese código.")
+            rows = self._tareas_repository.list_assignable_novelties(db, codigo_operador=codigo_operador)
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("operator novelty search", exc)
+        return [NovedadAsignacion.model_validate(dict(row)) for row in rows]
+
+    def search_assignable_novelties(
+        self, db: Session, *, novedad_id: int, tipo_documento: str, identificacion: str
+    ) -> list[NovedadAsignacion]:
+        self._require_assignment_role(db, tipo_documento=tipo_documento, identificacion=identificacion)
+        try:
+            rows = self._tareas_repository.search_assignable_novelties(db, novedad_id=novedad_id)
+        except SQLAlchemyError as exc:
+            self._raise_database_unavailable("novelty search", exc)
+        return [NovedadAsignacion.model_validate(dict(row)) for row in rows]
+
     def list_assignment_task_types(
         self,
         db: Session,
@@ -200,21 +222,30 @@ class TareasService:
                     detail="No se encontró un operador activo con ese código.",
                 )
 
-            novelty_rows = self._tareas_repository.get_open_novelties_by_ids(
-                db,
-                novedad_ids=request.novedades_ids,
-            )
-            selected_novelties = {
-                int(row["id_novedad"]): int(row["codigo"])
-                for row in novelty_rows
-            }
-            if (
-                set(selected_novelties) != set(request.novedades_ids)
-                or any(
-                    code != request.operador_id
-                    for code in selected_novelties.values()
+            if request.novedades_referencias:
+                novelty_rows = self._tareas_repository.list_assignable_novelties(
+                    db, codigo_operador=request.operador_id,
                 )
-            ):
+                available = {
+                    (row["categoria"], int(row["id_novedad"]))
+                    for row in novelty_rows
+                    if int(row["codigo"]) == request.operador_id
+                }
+                valid = all(
+                    (item.categoria, item.id_novedad) in available
+                    for item in request.novedades_referencias
+                )
+            else:
+                novelty_rows = self._tareas_repository.get_open_novelties_by_ids(
+                    db, novedad_ids=request.novedades_ids,
+                )
+                selected_novelties = {
+                    int(row["id_novedad"]): int(row["codigo"]) for row in novelty_rows
+                }
+                valid = set(selected_novelties) == set(request.novedades_ids) and all(
+                    code == request.operador_id for code in selected_novelties.values()
+                )
+            if not valid:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=(
@@ -237,6 +268,7 @@ class TareasService:
                 db,
                 operador_id=request.operador_id,
                 novedades_ids=request.novedades_ids,
+                novedades_referencias=[item.model_dump() for item in request.novedades_referencias],
                 tipo_tarea=task_type,
                 descripcion=request.descripcion,
                 usuario_creacion=f"{tipo_documento}-{identificacion}",
@@ -759,10 +791,16 @@ class TareasService:
             )
         if estado == "COMPLETADA":
             evidences = task["evidencias"] or []
-            if not evidences:
+            image_count = sum(item.get("tipo") == "image" for item in evidences)
+            video_count = sum(item.get("tipo") == "video" for item in evidences)
+            if image_count < MAX_EVIDENCE_IMAGES or video_count < MAX_EVIDENCE_VIDEOS:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Adjunte al menos una evidencia antes de completar la tarea.",
+                    detail=(
+                        f"No se puede completar la tarea #{tarea_id} debido a que no cumple "
+                        f"con la cantidad de evidencias. Fotos {image_count}/{MAX_EVIDENCE_IMAGES} "
+                        f"- Videos {video_count}/{MAX_EVIDENCE_VIDEOS}."
+                    ),
                 )
             if current_state != "EN_PROCESO":
                 raise HTTPException(
@@ -788,8 +826,8 @@ class TareasService:
 
         if updated is None:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="La tarea no existe o no está asignada a este operador.",
+                status_code=status.HTTP_409_CONFLICT,
+                detail="La tarea cambió. Actualice la información e intente de nuevo.",
             )
         logger.info("Task %s state updated to %s.", tarea_id, estado)
         return _to_task_response(updated)

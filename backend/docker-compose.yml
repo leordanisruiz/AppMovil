@@ -1,54 +1,69 @@
 services:
+
   api:
-    build: .
-    ports:
-      - "8001:8000"
+    build:
+      context: ./backend
     restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - ./backend/.env
     environment:
       APP_NAME: ${APP_NAME:-AppMovil API}
       ENVIRONMENT: ${ENVIRONMENT:-development}
-      API_V1_PREFIX: ${API_V1_PREFIX:-/api/v1}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://127.0.0.1:8081}
-      CORS_ORIGIN_REGEX: ${CORS_ORIGIN_REGEX:-}
       LOG_DIR: ${LOG_DIR:-/backend/logs}
-      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL con la conexion a Kactus en .env}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Define JWT_SECRET_KEY en .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      DATABASE_URL: ${DATABASE_URL}
       EVIDENCIAS_PATH: ${EVIDENCIAS_CONTAINER_PATH:-/mnt/evidencias}
-      EVIDENCE_CACHE_PATH: ${EVIDENCE_CACHE_PATH:-/var/cache/appmovil}
+
+      EVIDENCE_THUMBNAIL_CACHE_DIR: ${EVIDENCE_THUMBNAIL_CACHE_DIR:-/var/cache/appmovil/evidence-thumbnails}
+      EVIDENCE_ORIGINAL_CACHE_DIR: ${EVIDENCE_ORIGINAL_CACHE_DIR:-/var/cache/appmovil/evidence-originals}
       EVIDENCE_THUMBNAIL_CACHE_MAX_BYTES: ${EVIDENCE_THUMBNAIL_CACHE_MAX_BYTES:-536870912}
-      EVIDENCE_ORIGINAL_CACHE_MAX_BYTES: ${EVIDENCE_ORIGINAL_CACHE_MAX_BYTES:-1610612736}
-      EVIDENCE_VIDEO_CACHE_MAX_BYTES: ${EVIDENCE_VIDEO_CACHE_MAX_BYTES:-536870912}
+      EVIDENCE_MEDIA_CACHE_MAX_BYTES: ${EVIDENCE_MEDIA_CACHE_MAX_BYTES:-2147483648}
       EVIDENCE_VIDEO_CACHE_MAX_FILE_BYTES: ${EVIDENCE_VIDEO_CACHE_MAX_FILE_BYTES:-16777216}
-      EVIDENCE_CACHE_EXPIRY_SECONDS: ${EVIDENCE_CACHE_EXPIRY_SECONDS:-604800}
-      EVIDENCE_CACHE_CLEANUP_INTERVAL_SECONDS: ${EVIDENCE_CACHE_CLEANUP_INTERVAL_SECONDS:-3600}
-      EXPO_PUSH_TOKEN_ENCRYPTION_KEY: ${EXPO_PUSH_TOKEN_ENCRYPTION_KEY:?Define EXPO_PUSH_TOKEN_ENCRYPTION_KEY}
+
+      EXPO_PUSH_TOKEN_ENCRYPTION_KEY: ${EXPO_PUSH_TOKEN_ENCRYPTION_KEY}
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
       EXPO_POLL_INTERVAL_SECONDS: ${EXPO_POLL_INTERVAL_SECONDS:-5}
       EXPO_POLL_BATCH_SIZE: ${EXPO_POLL_BATCH_SIZE:-100}
+
     volumes:
-      - ./logs:/backend/logs
-      - ${EVIDENCIAS_HOST_PATH:-${EVIDENCIAS_PATH:-./evidencias}}:${EVIDENCIAS_CONTAINER_PATH:-/mnt/evidencias}
+      - ./backend/logs:/backend/logs
+      - ${EVIDENCIAS_HOST_PATH:-/mnt/evidencias_appmovil}:${EVIDENCIAS_CONTAINER_PATH:-/mnt/evidencias}
       - evidence-cache:/var/cache/appmovil
 
   push-worker:
-    build: .
+    build:
+      context: ./backend
     command: ["python", "-m", "app.worker"]
     restart: unless-stopped
     depends_on:
       - api
+
+    env_file:
+      - ./backend/.env
+
     environment:
       LOG_DIR: ${LOG_DIR:-/backend/logs}
-      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL con la conexion a Kactus en .env}
-      EXPO_PUSH_TOKEN_ENCRYPTION_KEY: ${EXPO_PUSH_TOKEN_ENCRYPTION_KEY:?Define EXPO_PUSH_TOKEN_ENCRYPTION_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      EXPO_PUSH_TOKEN_ENCRYPTION_KEY: ${EXPO_PUSH_TOKEN_ENCRYPTION_KEY}
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
       EXPO_POLL_INTERVAL_SECONDS: ${EXPO_POLL_INTERVAL_SECONDS:-5}
       EXPO_POLL_BATCH_SIZE: ${EXPO_POLL_BATCH_SIZE:-100}
+
     volumes:
-      - ./logs:/backend/logs
-      - ${EVIDENCIAS_HOST_PATH:-${EVIDENCIAS_PATH:-./evidencias}}:${EVIDENCIAS_CONTAINER_PATH:-/mnt/evidencias}
+      - ./backend/logs:/backend/logs
+      - ${EVIDENCIAS_HOST_PATH:-/mnt/evidencias_appmovil}:${EVIDENCIAS_CONTAINER_PATH:-/mnt/evidencias}
+
+  frontend:
+    build:
+      context: ./operadores-app
+    container_name: appmovil-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
 
 volumes:
   evidence-cache:
-    name: ${EVIDENCE_CACHE_VOLUME_NAME:-appmovil-evidence-cache}

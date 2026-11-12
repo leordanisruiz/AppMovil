@@ -84,6 +84,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   useEffect(() => () => selectedAssetsRef.current.forEach(releaseWebAsset), []);
   const [isSourcePickerVisible, setIsSourcePickerVisible] = useState(false);
   const [isCompletionConfirmVisible, setIsCompletionConfirmVisible] = useState(false);
+  const [completionWarning, setCompletionWarning] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [completedTask, setCompletedTask] = useState<OperatorTask | null>(null);
@@ -418,7 +419,17 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
             onRemoveAsset={removeAsset}
             onDropFiles={handleDroppedFiles}
             onUpload={() => uploadMutation.mutate()}
-            onComplete={() => setIsCompletionConfirmVisible(true)}
+            onComplete={() => {
+              const photos = task.evidencias.filter((item) => item.tipo === 'image').length;
+              const videos = task.evidencias.filter((item) => item.tipo === 'video').length;
+              if (photos < MAX_PHOTOS_PER_TASK || videos < MAX_VIDEOS_PER_TASK) {
+                setCompletionWarning(
+                  `No se puede completar la tarea #${task.id} debido a que no cumple con la cantidad de evidencias. Fotos ${photos}/${MAX_PHOTOS_PER_TASK} - Videos ${videos}/${MAX_VIDEOS_PER_TASK}.`,
+                );
+              } else {
+                setIsCompletionConfirmVisible(true);
+              }
+            }}
           />
         )}
         <MediaSourcePicker
@@ -438,6 +449,18 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
             statusMutation.mutate('COMPLETADA');
           }}
         />
+        <Modal transparent animationType="fade" visible={completionWarning !== null} onRequestClose={() => setCompletionWarning(null)}>
+          <View style={styles.completionBackdrop}>
+            <View style={styles.confirmationCard} accessibilityRole="alert">
+              <Text style={{ color: '#b45309', fontSize: 28 }}>⚠</Text>
+              <Text style={styles.confirmationTitle}>Evidencias incompletas</Text>
+              <Text style={styles.confirmationMessage}>{completionWarning}</Text>
+              <Pressable accessibilityRole="button" onPress={() => setCompletionWarning(null)} style={[styles.confirmationPrimaryButton, { backgroundColor: '#c76a00' }]}>
+                <Text style={styles.confirmationPrimaryButtonText}>Entendido</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
         <TaskCompletionModal
           visible={completedTask !== null}
           onClose={() => setCompletedTask(null)}
@@ -593,9 +616,15 @@ function TaskDetail({
         <View style={styles.detailCard}>
           <Text style={styles.cardLabel}>NOVEDADES RELACIONADAS</Text>
           <View style={styles.relatedNoveltyList}>
-            {task.novedades_ids.map((noveltyId) => (
-              <View key={noveltyId} style={styles.relatedNovelty}>
-                <Text style={styles.relatedNoveltyText}>Novedad #{noveltyId}</Text>
+            {(task.novedades_referencias?.length
+              ? task.novedades_referencias.map((item) => ({
+                  key: `${item.categoria}:${item.id_novedad}`,
+                  label: `${item.categoria === 'ico' ? 'ICO' : 'Inasistencia'} #${item.id_novedad}`,
+                }))
+              : task.novedades_ids.map((id) => ({ key: String(id), label: `Novedad #${id}` }))
+            ).map((novelty) => (
+              <View key={novelty.key} style={styles.relatedNovelty}>
+                <Text style={styles.relatedNoveltyText}>{novelty.label}</Text>
               </View>
             ))}
           </View>
@@ -684,7 +713,7 @@ function TaskDetail({
         </Text>
       ) : null}
 
-      {task.estado === 'EN_PROCESO' && task.evidencias.length > 0 ? (
+      {(task.estado === 'EN_PROCESO' || task.estado === 'PENDIENTE') ? (
         <AppButton
           disabled={isUpdatingStatus}
           loading={isUpdatingStatus}
@@ -759,8 +788,7 @@ function TaskCompletionModal({
           <Text style={styles.completionTitle}>¡Tarea completada!</Text>
           <Text style={styles.completionMessage}>
             Felicidades, has completado la tarea. El área de Operaciones
-            validará y, si cumple con los criterios, tu novedad en SICO quedará
-            cerrada.
+            validará las evidencias y gestionará las novedades relacionadas.
           </Text>
           <AppButton onPress={onClose} title="Entendido" />
         </View>

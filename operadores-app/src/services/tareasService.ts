@@ -37,14 +37,14 @@ export const tareasService = {
 
   async getOperatorNovelties(operatorCode: string): Promise<AssignableNovelty[]> {
     const response = await httpClient.get<AssignableNovelty[]>(
-      `/tareas/asignacion/operadores/${encodeURIComponent(operatorCode)}/novedades`,
+      `/tareas/asignacion/operadores/${encodeURIComponent(operatorCode)}/novedades-disponibles`,
     );
     return response.data;
   },
 
-  async getNovelty(noveltyId: number): Promise<AssignableNovelty> {
-    const response = await httpClient.get<AssignableNovelty>(
-      `/tareas/asignacion/novedades/${noveltyId}`,
+  async getNovelty(noveltyId: number): Promise<AssignableNovelty[]> {
+    const response = await httpClient.get<AssignableNovelty[]>(
+      `/tareas/asignacion/novedades/buscar/${noveltyId}`,
     );
     return response.data;
   },
