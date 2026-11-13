@@ -79,6 +79,8 @@ export type TaskEvidenceAsset = {
   mimeType: string;
   size?: number;
   durationMs?: number;
-  capturedAt?: string;
+  capturedAt: string;
+  latitude: number;
+  longitude: number;
   webFile?: Blob;
 };

@@ -1,6 +1,7 @@
 import json
 import logging
 import mimetypes
+import math
 import os
 import re
 import subprocess
@@ -510,7 +511,9 @@ class TareasService:
         tipo_documento: str,
         identificacion: str,
         files: list[UploadFile],
-        captured_at: list[datetime | None] | None = None,
+        captured_at: list[datetime],
+        latitude: list[float],
+        longitude: list[float],
     ) -> tuple[TareaResponse, int]:
         operador_id = self._get_authenticated_operator_id(
             db,
@@ -536,6 +539,20 @@ class TareasService:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Debe adjuntar al menos una evidencia.",
+            )
+        if not (len(files) == len(captured_at) == len(latitude) == len(longitude)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cada evidencia debe incluir fecha, hora y ubicación de captura.",
+            )
+        if any(
+            not math.isfinite(lat) or not math.isfinite(lon)
+            or not -90 <= lat <= 90 or not -180 <= lon <= 180
+            for lat, lon in zip(latitude, longitude)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Las coordenadas de la evidencia no son válidas.",
             )
         if len(files) > MAX_EVIDENCE_FILES:
             raise HTTPException(
@@ -583,8 +600,7 @@ class TareasService:
                         detail="El tamaño total de las evidencias supera 100 MB.",
                     )
 
-                supplied_time = captured_at[index] if captured_at and index < len(captured_at) else None
-                watermark_time = supplied_time or datetime.now(ZoneInfo("America/Bogota"))
+                watermark_time = captured_at[index]
                 if watermark_time.tzinfo is None:
                     watermark_time = watermark_time.replace(tzinfo=ZoneInfo("America/Bogota"))
                 else:
@@ -627,10 +643,16 @@ class TareasService:
                             temporary_path,
                             final_path,
                             watermark_time,
+                            operador_id,
+                            latitude[index],
+                            longitude[index],
                             on_processed=cache_thumbnail,
                         )
                     else:
-                        watermark_video(temporary_path, final_path, watermark_time)
+                        watermark_video(
+                            temporary_path, final_path, watermark_time,
+                            operador_id, latitude[index], longitude[index],
+                        )
                         poster_started = perf_counter()
                         try:
                             poster_result = get_evidence_cache().store_video_thumbnail(final_path)

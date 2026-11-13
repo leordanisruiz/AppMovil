@@ -11,6 +11,7 @@ from starlette.datastructures import Headers
 from sqlalchemy.orm import Session
 
 from app.services.tareas_service import TareasService
+from app.services.evidence_watermark import watermark_image
 from app.schemas.tarea import TareaCreateRequest
 
 
@@ -457,9 +458,12 @@ class TareasServiceTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as directory:
-            with patch(
-                "app.services.tareas_service.get_settings",
-                return_value=Mock(evidencias_path=directory),
+            with (
+                patch(
+                    "app.services.tareas_service.get_settings",
+                    return_value=Mock(evidencias_path=directory),
+                ),
+                patch("app.services.tareas_service.watermark_image", wraps=watermark_image) as watermark,
             ):
                 task, uploaded_count = self.service.upload_evidence(
                     self.db,
@@ -467,15 +471,42 @@ class TareasServiceTests(unittest.TestCase):
                     tipo_documento="CC",
                     identificacion="1080017116",
                     files=[upload],
+                    captured_at=[datetime(2026, 10, 27, 11, 14, 45)],
+                    latitude=[4.60971],
+                    longitude=[-74.08175],
                 )
 
             self.assertEqual(task.estado, "EN_PROCESO")
+            self.assertEqual(watermark.call_args.args[3:], (809772, 4.60971, -74.08175))
             self.assertEqual(uploaded_count, 1)
             persisted = self.task_repository.append_evidences.call_args.kwargs
             self.assertEqual(persisted["operador_id"], 809772)
             self.assertEqual(len(persisted["evidencias"]), 1)
             stored_path = Path(directory) / persisted["evidencias"][0]["ruta"].lstrip("/")
             self.assertTrue(stored_path.is_file())
+
+    def test_upload_rejects_missing_or_invalid_capture_metadata(self) -> None:
+        self.task_repository.get_by_id.return_value = _task_record(estado="PENDIENTE")
+        upload = UploadFile(
+            file=BytesIO(_build_png_bytes()),
+            filename="evidence.png",
+            headers=Headers({"content-type": "image/png"}),
+        )
+        for dates, latitudes, longitudes in [
+            ([], [4.6], [-74.0]),
+            ([datetime(2026, 10, 27)], [], [-74.0]),
+            ([datetime(2026, 10, 27)], [91.0], [-74.0]),
+            ([datetime(2026, 10, 27)], [4.6], [float("nan")]),
+        ]:
+            with self.subTest(dates=dates, latitudes=latitudes, longitudes=longitudes):
+                with self.assertRaises(HTTPException) as context:
+                    self.service.upload_evidence(
+                        self.db, tarea_id=1, tipo_documento="CC",
+                        identificacion="1080017116", files=[upload],
+                        captured_at=dates, latitude=latitudes, longitude=longitudes,
+                    )
+                self.assertEqual(context.exception.status_code, 422)
+        self.task_repository.append_evidences.assert_not_called()
 
     def test_rejects_marking_task_complete_without_evidence(self) -> None:
         self.task_repository.get_by_id.return_value = _task_record(
@@ -518,6 +549,9 @@ class TareasServiceTests(unittest.TestCase):
                     tipo_documento="CC",
                     identificacion="1080017116",
                     files=[upload],
+                    captured_at=[datetime(2026, 10, 27, 11, 14, 45)],
+                    latitude=[4.60971],
+                    longitude=[-74.08175],
                 )
 
         self.assertEqual(context.exception.status_code, 422)

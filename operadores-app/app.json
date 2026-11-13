@@ -8,6 +8,19 @@
     "userInterfaceStyle": "light",
     "plugins": [
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Portal Operadores necesita acceso a la cámara para tomar evidencias.",
+          "microphonePermission": "Portal Operadores necesita acceso al micrófono para grabar videos."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Portal Operadores necesita tu ubicación para registrar dónde se tomó la evidencia."
+        }
+      ],
+      [
         "expo-notifications",
         {
           "color": "#FF0000",

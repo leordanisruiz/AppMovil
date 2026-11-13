@@ -254,7 +254,8 @@ Endpoints autenticados:
 - `GET /api/v1/tareas/{id}/evidencias/{nombre}`: entrega un archivo solo si
   pertenece a una tarea del operador autenticado.
 - `POST /api/v1/tareas/{id}/evidencias`: recibe archivos multipart en el campo
-  `files` y fechas opcionales en los campos `captured_at` correspondientes. Acepta
+  `files` y un `captured_at` (ISO 8601), `latitude` y `longitude` por archivo,
+  repetidos en el mismo orden. Los tres metadatos son obligatorios. Acepta
   JPG, PNG, WebP, HEIC, MP4 y MOV; máximo 12 fotos y 2 videos por tarea, con 100 MB
   combinados por solicitud. Valida extensión, tipo declarado, firma y duración.
 - `PATCH /api/v1/tareas/{id}/estado`: permite pasar a `EN_PROCESO` o
@@ -271,20 +272,23 @@ su carpeta original. En ejecución directa sobre Windows, el valor de `.env` pue
 `EVIDENCIAS_PATH=\\172.20.10.32\web`. La cuenta del proceso necesita permisos
 de lectura/escritura sobre el recurso compartido.
 
-El servidor incrusta la fecha y hora en el contenido antes de guardar: procesa
+El servidor incrusta el código del operador autenticado, la fecha y hora y las
+coordenadas en el contenido antes de guardar: procesa
 fotografías con Pillow (incluyendo HEIC/HEIF mediante pillow-heif) y videos con
 FFmpeg. Las fotos se normalizan a JPEG y los videos a MP4; los originales no se
 conservan. Docker instala FFmpeg y la fuente DejaVu. En ejecución directa fuera
 de Docker también deben instalarse FFmpeg con el filtro `drawtext`, fuentes
-DejaVu y las dependencias Python de `requirements.txt`. Las capturas hechas en
-la app mandan la hora del dispositivo; para galería se usa EXIF si está presente,
-para archivos la última modificación si está disponible, y como último recurso
-la hora de recepción del servidor (zona `America/Bogota`). La hora queda visible
-en la evidencia descargada o compartida.
+DejaVu y las dependencias Python de `requirements.txt`. La app toma evidencias
+con cámara y requiere permiso de ubicación para cada captura. La fecha y las
+coordenadas provienen del dispositivo y no constituyen una prueba independiente
+de autenticidad; la fecha se muestra en la zona `America/Bogota`. Los archivos
+guardados anteriormente no se modifican. Los clientes anteriores deben
+actualizarse para enviar los metadatos requeridos.
 
-Expo solicita un máximo de 120 segundos a la cámara nativa. El comportamiento de
-auto-detención depende de la cámara del sistema; por ello el cliente y el backend
-también rechazan cualquier archivo que supere dos minutos.
+La cámara y ubicación web requieren HTTPS o localhost; la grabación web requiere
+un navegador que admita MP4 con MediaRecorder. En móvil se requiere una nueva
+compilación con los permisos de cámara, micrófono y ubicación. Los videos no
+pueden superar tres minutos.
 
 Docker corre Linux y no puede usar directamente una ruta UNC de Windows. Monte
 el recurso SMB en el host/container y configure, por ejemplo,

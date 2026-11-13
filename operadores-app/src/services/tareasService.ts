@@ -118,7 +118,9 @@ export const tareasService = {
           type: asset.mimeType,
         });
       }
-      formData.append('captured_at', asset.capturedAt ?? new Date().toISOString());
+      formData.append('captured_at', asset.capturedAt);
+      formData.append('latitude', String(asset.latitude));
+      formData.append('longitude', String(asset.longitude));
     }
 
     const response = await httpClient.post<UploadEvidenceResponse>(

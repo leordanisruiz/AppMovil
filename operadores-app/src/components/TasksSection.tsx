@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   ActivityIndicator,
@@ -15,8 +15,6 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getApiErrorMessage } from '../services/authService';
 import { tareasService } from '../services/tareasService';
@@ -32,6 +30,7 @@ import { AppButton } from './AppButton';
 import { EvidenceGallery } from './EvidenceGallery';
 import { SectionHeading } from './SectionHeading';
 import { DesktopTasksTable, type TaskStatusFilter } from './DesktopTasksTable';
+import { EvidenceCamera } from './EvidenceCamera';
 
 type TasksSectionProps = {
   operatorCode: string | null;
@@ -83,6 +82,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   useEffect(() => { selectedAssetsRef.current = selectedAssets; }, [selectedAssets]);
   useEffect(() => () => selectedAssetsRef.current.forEach(releaseWebAsset), []);
   const [isSourcePickerVisible, setIsSourcePickerVisible] = useState(false);
+  const [cameraMode, setCameraMode] = useState<'photo' | 'video' | null>(null);
   const [isCompletionConfirmVisible, setIsCompletionConfirmVisible] = useState(false);
   const [completionWarning, setCompletionWarning] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -202,32 +202,6 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
     return true;
   };
 
-  const handleDroppedFiles = (files: File[]) => {
-    if (Platform.OS !== 'web') return;
-    const assets = files.map((file): TaskEvidenceAsset => ({
-      uri: URL.createObjectURL(file),
-      name: file.name || `evidencia-${Date.now()}`,
-      mimeType: file.type || inferEvidenceMimeType(file.name),
-      size: file.size,
-      webFile: file,
-    }));
-    if (!addAssets(assets)) assets.forEach(releaseWebAsset);
-  };
-
-  const showPickerError = (error: unknown) => {
-    console.error('No fue posible seleccionar una evidencia:', error);
-    const errorText = error instanceof Error ? error.message : String(error);
-    if (errorText.includes('PickingInProgressException')) {
-      setActionError(
-        'El selector de archivos aún está abierto. Ciérralo e intenta seleccionar el archivo nuevamente.',
-      );
-      return;
-    }
-    setActionError(
-      getApiErrorMessage(error, 'No fue posible abrir la cámara o la galería.'),
-    );
-  };
-
   const runPendingPickerAction = async () => {
     const action = pendingPickerAction.current;
     if (!action) return;
@@ -244,109 +218,11 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
     pickerInProgress.current = true;
     pendingPickerAction.current = action;
     setIsSourcePickerVisible(false);
-    // Mobile browsers require file/camera pickers to open during the original
-    // user gesture. Waiting for the modal animation (or a permission promise)
-    // loses that activation and Safari silently ignores the request.
     if (Platform.OS === 'web') {
       void runPendingPickerAction();
       return;
     }
     setTimeout(() => void runPendingPickerAction(), 500);
-  };
-
-  const takePhoto = async () => {
-    try {
-      if (Platform.OS !== 'web') {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (!permission.granted) {
-          Alert.alert(
-            'Permiso de cámara requerido',
-            'Permite el acceso a la cámara para tomar una foto como evidencia.',
-          );
-          return;
-        }
-      }
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images'],
-        exif: true,
-        quality: 0.8,
-      });
-      if (!result.canceled) addAssets(result.assets.map((asset) => toTaskEvidenceAsset(asset, true)));
-    } catch (error) {
-      showPickerError(error);
-    }
-  };
-
-  const recordVideo = async () => {
-    try {
-      if (Platform.OS !== 'web') {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (!permission.granted) {
-          Alert.alert('Permiso de cámara requerido', 'Permite el acceso a la cámara para grabar un video.');
-          return;
-        }
-      }
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['videos'],
-        videoMaxDuration: 120,
-        quality: 0.7,
-      });
-      if (!result.canceled) addAssets(result.assets.map((asset) => toTaskEvidenceAsset(asset, true)));
-    } catch (error) {
-      showPickerError(error);
-    }
-  };
-
-  const chooseGallery = async () => {
-    try {
-      if (Platform.OS !== 'web') {
-        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-          Alert.alert(
-            'Permiso de galería requerido',
-            'Permite el acceso a fotos y videos para seleccionarlos. También puedes usar “Seleccionar Archivo”.',
-          );
-          return;
-        }
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images', 'videos'],
-        allowsMultipleSelection: true,
-        selectionLimit: MAX_SELECTED_FILES,
-        exif: true,
-        quality: 0.8,
-      });
-      if (!result.canceled) addAssets(result.assets.map((asset) => toTaskEvidenceAsset(asset)));
-    } catch (error) {
-      showPickerError(error);
-    }
-  };
-
-  const chooseFiles = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: [...SUPPORTED_EVIDENCE_TYPES],
-        multiple: true,
-        copyToCacheDirectory: true,
-      });
-      if (result.canceled) return;
-
-      const assets: TaskEvidenceAsset[] = [];
-      for (const asset of result.assets) {
-        const evidence = toTaskEvidenceAssetFromDocument(asset);
-        if (!evidence) {
-          Alert.alert(
-            'Formato no compatible',
-            'Selecciona únicamente archivos de imagen o video.',
-          );
-          return;
-        }
-        assets.push(evidence);
-      }
-      addAssets(assets);
-    } catch (error) {
-      showPickerError(error);
-    }
   };
 
   const removeAsset = (uri: string) => {
@@ -417,7 +293,6 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
             canManageEvidence={canManageEvidence}
             onAttach={() => setIsSourcePickerVisible(true)}
             onRemoveAsset={removeAsset}
-            onDropFiles={handleDroppedFiles}
             onUpload={() => uploadMutation.mutate()}
             onComplete={() => {
               const photos = task.evidencias.filter((item) => item.tipo === 'image').length;
@@ -436,11 +311,19 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
           visible={isSourcePickerVisible}
           onDismiss={() => void runPendingPickerAction()}
           onClose={() => setIsSourcePickerVisible(false)}
-          onTakePhoto={() => launchPickerAfterDismiss(takePhoto)}
-          onRecordVideo={() => launchPickerAfterDismiss(recordVideo)}
-          onChooseGallery={() => launchPickerAfterDismiss(chooseGallery)}
-          onChooseFiles={() => launchPickerAfterDismiss(chooseFiles)}
+          onTakePhoto={() => launchPickerAfterDismiss(async () => setCameraMode('photo'))}
+          onRecordVideo={() => launchPickerAfterDismiss(async () => setCameraMode('video'))}
         />
+        {cameraMode && (
+          <EvidenceCamera
+            mode={cameraMode}
+            onClose={() => setCameraMode(null)}
+            onCapture={(asset) => {
+              if (!addAssets([asset])) releaseWebAsset(asset);
+              setCameraMode(null);
+            }}
+          />
+        )}
         <TaskCompletionConfirmModal
           visible={isCompletionConfirmVisible}
           onCancel={() => setIsCompletionConfirmVisible(false)}
@@ -572,7 +455,6 @@ function TaskDetail({
   canManageEvidence,
   onAttach,
   onRemoveAsset,
-  onDropFiles,
   onUpload,
   onComplete,
 }: {
@@ -585,7 +467,6 @@ function TaskDetail({
   canManageEvidence: boolean;
   onAttach: () => void;
   onRemoveAsset: (uri: string) => void;
-  onDropFiles: (files: File[]) => void;
   onUpload: () => void;
   onComplete: () => void;
 }) {
@@ -650,17 +531,7 @@ function TaskDetail({
           ) : null}
         </View>
 
-        {Platform.OS === 'web' && canAttach ? createElement('div', {
-          onDragOver: (event: DragEvent) => event.preventDefault(),
-          onDrop: (event: DragEvent) => {
-            event.preventDefault();
-            const files = Array.from(event.dataTransfer?.files ?? []);
-            if (files.length) onDropFiles(files);
-          },
-          style: { minHeight: 120 },
-        }, <><View style={styles.dropZone}><Text style={styles.dropZoneTitle}>Suelta aquí tus evidencias</Text><Text style={styles.dropZoneCaption}>También puedes usar + Adjuntar para seleccionar archivos</Text></View><EvidenceGallery emptyMessage="Aún no has enviado evidencias para esta tarea." evidences={task.evidencias} taskId={task.id} /></>) : (
-          <EvidenceGallery emptyMessage="Aún no has enviado evidencias para esta tarea." evidences={task.evidencias} taskId={task.id} />
-        )}
+        <EvidenceGallery emptyMessage="Aún no has enviado evidencias para esta tarea." evidences={task.evidencias} taskId={task.id} />
 
         {selectedAssets.length ? (
           <View style={styles.selectedEvidence}>
@@ -847,16 +718,12 @@ function MediaSourcePicker({
   onClose,
   onTakePhoto,
   onRecordVideo,
-  onChooseGallery,
-  onChooseFiles,
 }: {
   visible: boolean;
   onDismiss: () => void;
   onClose: () => void;
   onTakePhoto: () => void;
   onRecordVideo: () => void;
-  onChooseGallery: () => void;
-  onChooseFiles: () => void;
 }) {
   return (
     <Modal
@@ -876,11 +743,9 @@ function MediaSourcePicker({
         <View style={styles.pickerSheet}>
           <View style={styles.pickerHandle} />
           <Text style={styles.cardTitle}>Adjuntar evidencia</Text>
-          <Text style={styles.bodyText}>Elige cómo quieres agregar tus archivos.</Text>
+          <Text style={styles.bodyText}>Las evidencias deben tomarse con la cámara y requieren ubicación.</Text>
           <MediaSourceButton icon="◉" label="Tomar Foto" onPress={onTakePhoto} />
           <MediaSourceButton icon="▶" label="Grabar Video" onPress={onRecordVideo} />
-          <MediaSourceButton icon="▧" label="Seleccionar de Galería" onPress={onChooseGallery} />
-          <MediaSourceButton icon="▤" label="Seleccionar Archivo" onPress={onChooseFiles} />
           <Pressable accessibilityRole="button" onPress={onClose} style={styles.cancelButton}>
             <Text style={styles.cancelButtonText}>Cancelar</Text>
           </Pressable>
@@ -910,114 +775,10 @@ function MediaSourceButton({
   );
 }
 
-function toTaskEvidenceAsset(
-  asset: ImagePicker.ImagePickerAsset,
-  capturedNow = false,
-): TaskEvidenceAsset & { size: number } {
-  const fileName = asset.fileName || asset.uri.split('/').pop() || `evidencia-${Date.now()}`;
-  const extension = fileName.split('.').pop()?.toLowerCase();
-  const detectedMimeType =
-    asset.mimeType ??
-    (asset.type === 'video'
-      ? extension === 'mov'
-        ? 'video/quicktime'
-        : 'video/mp4'
-      : extension === 'png'
-        ? 'image/png'
-        : extension === 'webp'
-          ? 'image/webp'
-          : extension === 'heic' || extension === 'heif'
-            ? `image/${extension}`
-            : 'image/jpeg');
-  // Android can return camera captures with a UUID and no file extension.
-  // The API validates both MIME type and extension, so make them agree.
-  const mimeType = detectedMimeType.toLowerCase() === 'image/jpg'
-    ? 'image/jpeg'
-    : detectedMimeType.toLowerCase();
-  const expectedExtension = getEvidenceExtension(mimeType);
-  const currentExtension = fileName.split('.').pop()?.toLowerCase();
-  const normalizedFileName = expectedExtension
-    && currentExtension !== expectedExtension
-    ? `${fileName}.${expectedExtension}`
-    : fileName;
-  return {
-    uri: asset.uri,
-    name: normalizedFileName.replace(/[^\w.-]/g, '_'),
-    mimeType,
-    size: asset.fileSize ?? 0,
-    webFile: Platform.OS === 'web' ? asset.file : undefined,
-    durationMs: typeof asset.duration === 'number' ? asset.duration : undefined,
-    capturedAt: capturedNow
-      ? new Date(Date.now() - (asset.type === 'video' ? asset.duration ?? 0 : 0)).toISOString()
-      : parseExifCaptureTime(asset.exif?.DateTimeOriginal),
-  };
-}
-
-function getEvidenceExtension(mimeType: string): string | null {
-  switch (mimeType) {
-    case 'image/jpeg': return 'jpg';
-    case 'image/png': return 'png';
-    case 'image/webp': return 'webp';
-    case 'image/heic': return 'heic';
-    case 'image/heif': return 'heif';
-    case 'video/mp4': return 'mp4';
-    case 'video/quicktime': return 'mov';
-    default: return null;
-  }
-}
-
-function toTaskEvidenceAssetFromDocument(
-  asset: DocumentPicker.DocumentPickerAsset,
-): TaskEvidenceAsset | null {
-  const mimeType = asset.mimeType ?? getMimeTypeFromFileName(asset.name);
-  if (!mimeType || !SUPPORTED_EVIDENCE_TYPES.has(mimeType)) {
-    return null;
-  }
-  return {
-    uri: asset.uri,
-    name: asset.name.replace(/[^\w.-]/g, '_'),
-    mimeType,
-    size: asset.size,
-    webFile: Platform.OS === 'web' ? asset.file : undefined,
-    capturedAt: asset.lastModified ? new Date(asset.lastModified).toISOString() : undefined,
-  };
-}
-
 function releaseWebAsset(asset: TaskEvidenceAsset) {
   if (Platform.OS === 'web' && asset.webFile && asset.uri.startsWith('blob:')) {
     URL.revokeObjectURL(asset.uri);
   }
-}
-
-function inferEvidenceMimeType(name: string): string {
-  const extension = name.split('.').pop()?.toLowerCase();
-  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
-  if (extension === 'png') return 'image/png';
-  if (extension === 'webp') return 'image/webp';
-  if (extension === 'heic') return 'image/heic';
-  if (extension === 'heif') return 'image/heif';
-  if (extension === 'mov') return 'video/quicktime';
-  if (extension === 'mp4') return 'video/mp4';
-  return '';
-}
-
-function parseExifCaptureTime(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const match = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(value);
-  if (!match) return undefined;
-  const [, year, month, day, hour, minute, second] = match;
-  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}-05:00`).toISOString();
-}
-
-function getMimeTypeFromFileName(fileName: string): string | null {
-  const extension = fileName.split('.').pop()?.toLowerCase();
-  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
-  if (extension === 'png') return 'image/png';
-  if (extension === 'webp') return 'image/webp';
-  if (extension === 'heic' || extension === 'heif') return `image/${extension}`;
-  if (extension === 'mp4' || extension === 'm4v') return 'video/mp4';
-  if (extension === 'mov') return 'video/quicktime';
-  return null;
 }
 
 function getStatusPresentation(status: TaskStatus): {

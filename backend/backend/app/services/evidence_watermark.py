@@ -1,4 +1,4 @@
-"""Bake a local capture timestamp into evidence before permanent storage."""
+"""Bake capture information into evidence before permanent storage."""
 
 from datetime import datetime
 import glob
@@ -16,6 +16,9 @@ def watermark_image(
     source: Path,
     destination: Path,
     captured_at: datetime,
+    operator_code: int,
+    latitude: float,
+    longitude: float,
     *,
     on_processed: Callable[[Image.Image], None] | None = None,
 ) -> None:
@@ -29,15 +32,24 @@ def watermark_image(
     with Image.open(source) as opened:
         image = ImageOps.exif_transpose(opened).convert("RGB")
     draw = ImageDraw.Draw(image)
-    label = captured_at.strftime("%d/%m/%Y %H:%M:%S")
+    label = _capture_label(captured_at, operator_code, latitude, longitude)
     font_size = max(18, round(image.width * 0.035))
     try:
         font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
     except OSError:
         font = ImageFont.load_default()
     padding = max(10, round(font_size * 0.45))
-    bounds = draw.textbbox((0, 0), label, font=font, stroke_width=0)
+    bounds = draw.multiline_textbbox((0, 0), label, font=font, spacing=4)
     text_width, text_height = bounds[2] - bounds[0], bounds[3] - bounds[1]
+    while text_width + padding * 2 > image.width and font_size > 8:
+        font_size -= 1
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
+        except OSError:
+            font = ImageFont.load_default()
+            break
+        bounds = draw.multiline_textbbox((0, 0), label, font=font, spacing=4)
+        text_width, text_height = bounds[2] - bounds[0], bounds[3] - bounds[1]
     x = max(padding, image.width - text_width - padding * 2)
     y = max(padding, image.height - text_height - padding * 2)
     draw.rounded_rectangle(
@@ -45,14 +57,21 @@ def watermark_image(
         radius=max(4, padding // 2),
         fill=(12, 20, 30),
     )
-    draw.text((x, y), label, font=font, fill=(255, 255, 255), stroke_width=0)
+    draw.multiline_text((x - bounds[0], y - bounds[1]), label, font=font, fill=(255, 255, 255), spacing=4)
     image.save(destination, format="JPEG", quality=90, optimize=True)
     if on_processed:
         on_processed(image)
 
 
-def watermark_video(source: Path, destination: Path, captured_at: datetime) -> None:
-    label = captured_at.strftime("%d/%m/%Y %H:%M:%S")
+def _capture_label(captured_at: datetime, operator_code: int, latitude: float, longitude: float) -> str:
+    return f"{operator_code} - {captured_at:%d/%m/%Y %H:%M:%S}\n{latitude:.5f}, {longitude:.5f}"
+
+
+def watermark_video(
+    source: Path, destination: Path, captured_at: datetime,
+    operator_code: int, latitude: float, longitude: float,
+) -> None:
+    label = _capture_label(captured_at, operator_code, latitude, longitude)
     with tempfile.TemporaryDirectory(prefix="evidence-watermark-") as temp_dir:
         text_file = Path(temp_dir) / "timestamp.txt"
         text_file.write_text(label, encoding="utf-8")
@@ -66,7 +85,7 @@ def watermark_video(source: Path, destination: Path, captured_at: datetime) -> N
         filter_value = (
             # Use an explicit platform font and escape paths for FFmpeg's filter parser.
             f"drawtext=fontfile='{font_path}':"
-            "fontsize=h*0.035:fontcolor=white:"
+            "fontsize=min(h*0.035\\,w*0.035):fontcolor=white:"
             "box=1:boxcolor=0x0C141E@0.75:boxborderw=12:"
             f"x=w-text_w-24:y=h-text_h-24:textfile='{text_path}':reload=0"
         )
