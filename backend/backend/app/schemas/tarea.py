@@ -23,6 +23,7 @@ class Evidencia(BaseModel):
     fecha: date
     tipo: EvidenceType = "image"
     fecha_captura: datetime | None = None
+    ubicacion: str | None = None
     duracion_segundos: float | None = Field(default=None, ge=0)
 
 

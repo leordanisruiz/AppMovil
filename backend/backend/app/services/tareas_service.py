@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from collections.abc import Mapping
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from time import perf_counter
 from typing import Any, NoReturn
@@ -699,6 +700,10 @@ class TareasService:
                         ),
                         "fecha": date.today().isoformat(),
                         "fecha_captura": watermark_time.isoformat(),
+                        "ubicacion": (
+                            f"Longitud {Decimal(str(longitude[index])):f}, "
+                            f"latitud {Decimal(str(latitude[index])):f}"
+                        ),
                         "tipo": media_type,
                         **(
                             {"duracion_segundos": round(video_duration_seconds, 2)}

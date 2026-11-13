@@ -285,6 +285,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
         ) : (
           <TaskDetail
             task={task}
+            operatorCode={operatorCode}
             selectedAssets={selectedAssets}
             isUploading={uploadMutation.isPending}
             isUpdatingStatus={statusMutation.isPending}
@@ -447,6 +448,7 @@ function TaskCard({
 
 function TaskDetail({
   task,
+  operatorCode,
   selectedAssets,
   isUploading,
   isUpdatingStatus,
@@ -459,6 +461,7 @@ function TaskDetail({
   onComplete,
 }: {
   task: OperatorTask;
+  operatorCode: string;
   selectedAssets: TaskEvidenceAsset[];
   isUploading: boolean;
   isUpdatingStatus: boolean;
@@ -536,19 +539,33 @@ function TaskDetail({
         {selectedAssets.length ? (
           <View style={styles.selectedEvidence}>
             <Text style={styles.cardLabel}>LISTAS PARA SUBIR</Text>
+            <Text style={styles.evidenceHint}>
+              Vista previa de los datos de captura. La marca se incorpora al archivo al subirlo.
+            </Text>
             <View style={styles.previewGrid}>
               {selectedAssets.map((asset) => (
                 <View key={asset.uri} style={styles.previewCard}>
-                  {asset.mimeType.startsWith('image/') ? (
-                    <Image source={{ uri: asset.uri }} style={styles.previewImage} />
-                  ) : (
-                    <View style={styles.videoPreview}>
-                      <Text style={styles.videoPreviewIcon}>▶</Text>
-                      <Text numberOfLines={1} style={styles.videoPreviewLabel}>
-                        VIDEO
+                  <View>
+                    {asset.mimeType.startsWith('image/') ? (
+                      <Image source={{ uri: asset.uri }} resizeMode="contain" style={styles.previewImage} />
+                    ) : (
+                      <View style={styles.videoPreview}>
+                        <Text style={styles.videoPreviewIcon}>▶</Text>
+                        <Text numberOfLines={1} style={styles.videoPreviewLabel}>
+                          VIDEO
+                        </Text>
+                      </View>
+                    )}
+                    <View pointerEvents="none" style={styles.watermarkPreview}>
+                      <Text style={styles.watermarkPreviewText}>{operatorCode}</Text>
+                      <Text style={styles.watermarkPreviewText}>
+                        {formatCaptureDate(asset.capturedAt)}
+                      </Text>
+                      <Text style={styles.watermarkPreviewText}>
+                        {asset.latitude.toFixed(5)}, {asset.longitude.toFixed(5)}
                       </Text>
                     </View>
-                  )}
+                  </View>
                   <Pressable
                     accessibilityLabel={`Eliminar ${asset.name}`}
                     accessibilityRole="button"
@@ -809,6 +826,19 @@ function formatDate(value: string): string {
     month: 'short',
     year: 'numeric',
   }).format(date);
+}
+
+function formatCaptureDate(value: string): string {
+  return new Intl.DateTimeFormat('es-CO', {
+    timeZone: 'America/Bogota',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(value));
 }
 
 const styles = StyleSheet.create({
@@ -1076,6 +1106,22 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     height: 112,
     width: '100%',
+  },
+  watermarkPreview: {
+    alignSelf: 'flex-end',
+    backgroundColor: 'rgba(12, 20, 30, 0.88)',
+    borderRadius: radius.small,
+    bottom: 4,
+    maxWidth: '100%',
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    position: 'absolute',
+    right: 4,
+  },
+  watermarkPreviewText: {
+    color: colors.white,
+    fontSize: 9,
+    fontWeight: '700',
   },
   videoPreview: {
     alignItems: 'center',

@@ -173,7 +173,7 @@ function EvidenceCard({
         {showThumbnail ? (
           <Image
             cachePolicy="memory-disk"
-            contentFit="cover"
+            contentFit="contain"
             onError={() => {
               setHasPreviewError(true);
               settlePreview();
