@@ -258,6 +258,9 @@ Endpoints autenticados:
   repetidos en el mismo orden. Los tres metadatos son obligatorios. Acepta
   JPG, PNG, WebP, HEIC, MP4 y MOV; máximo 12 fotos y 2 videos por tarea, con 100 MB
   combinados por solicitud. Valida extensión, tipo declarado, firma y duración.
+  Cada nueva evidencia guarda `ubicacion` con el formato
+  `Longitud -74.15112735809976, latitud 4.557637758636031`; las evidencias
+  anteriores sin coordenadas almacenadas devuelven `ubicacion: null`.
 - `PATCH /api/v1/tareas/{id}/estado`: permite pasar a `EN_PROCESO` o
   `COMPLETADA`. Subir evidencia cambia automáticamente una tarea
   `PENDIENTE` a `EN_PROCESO`; completarla exige 12 fotografías y 2 videos y no
@@ -283,7 +286,10 @@ con cámara y requiere permiso de ubicación para cada captura. La fecha y las
 coordenadas provienen del dispositivo y no constituyen una prueba independiente
 de autenticidad; la fecha se muestra en la zona `America/Bogota`. Los archivos
 guardados anteriormente no se modifican. Los clientes anteriores deben
-actualizarse para enviar los metadatos requeridos.
+actualizarse para enviar los metadatos requeridos. Antes de subir, la app muestra
+una vista previa de los datos de la marca; esta se incrusta en la fotografía o
+el video al subir la evidencia, también desde navegadores móviles. Abra la
+evidencia subida para verla a tamaño completo.
 
 La cámara y ubicación web requieren HTTPS o localhost; la grabación web requiere
 un navegador que admita MP4 con MediaRecorder. En móvil se requiere una nueva

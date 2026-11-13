@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -7,11 +9,12 @@ from typing import cast
 from unittest.mock import Mock, patch
 
 from fastapi import HTTPException, UploadFile
+from PIL import Image
 from starlette.datastructures import Headers
 from sqlalchemy.orm import Session
 
 from app.services.tareas_service import TareasService
-from app.services.evidence_watermark import watermark_image
+from app.services.evidence_watermark import _capture_label, resolve_ffmpeg_executable, watermark_image
 from app.schemas.tarea import TareaCreateRequest
 
 
@@ -484,6 +487,113 @@ class TareasServiceTests(unittest.TestCase):
             self.assertEqual(len(persisted["evidencias"]), 1)
             stored_path = Path(directory) / persisted["evidencias"][0]["ruta"].lstrip("/")
             self.assertTrue(stored_path.is_file())
+
+    def test_upload_saves_each_location_and_keeps_older_evidence_readable(self) -> None:
+        legacy = _evidence_record("anterior.jpg")
+        self.task_repository.get_by_id.return_value = _task_record(evidencias=[legacy])
+        self.task_repository.append_evidences.side_effect = lambda _db, **kwargs: _task_record(
+            estado="EN_PROCESO", evidencias=[legacy, *kwargs["evidencias"]],
+        )
+        uploads = [
+            UploadFile(
+                file=BytesIO(_build_png_bytes()),
+                filename=f"foto{index}.png",
+                headers=Headers({"content-type": "image/png"}),
+            )
+            for index in range(3)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch("app.services.tareas_service.get_settings", return_value=Mock(evidencias_path=directory)),
+                patch("app.services.tareas_service.get_evidence_cache") as cache,
+            ):
+                cache.return_value.store_thumbnail_from_image.return_value = Mock(cache_status="test", size_bytes=0)
+                task, uploaded_count = self.service.upload_evidence(
+                    self.db, tarea_id=1, tipo_documento="CC", identificacion="1080017116",
+                    files=uploads, captured_at=[datetime(2026, 10, 27)] * 3,
+                    latitude=[4.557637758636031, 0.0, 0.0000001],
+                    longitude=[-74.15112735809976, 180.0, -0.0000001],
+                )
+
+        expected = [
+            "Longitud -74.15112735809976, latitud 4.557637758636031",
+            "Longitud 180.0, latitud 0.0",
+            "Longitud -0.0000001, latitud 0.0000001",
+        ]
+        stored = self.task_repository.append_evidences.call_args.kwargs["evidencias"]
+        self.assertEqual([item["ubicacion"] for item in stored], expected)
+        serialized = task.model_dump(mode="json")["evidencias"]
+        self.assertIsNone(serialized[0]["ubicacion"])
+        self.assertEqual([item["ubicacion"] for item in serialized[1:]], expected)
+        self.assertEqual(uploaded_count, 3)
+
+    def test_browser_photo_and_video_are_stored_with_capture_watermarks(self) -> None:
+        ffmpeg = resolve_ffmpeg_executable("ffmpeg")
+        if not Path(ffmpeg).is_file() and not shutil.which(ffmpeg):
+            self.skipTest("FFmpeg no está instalado")
+
+        self.task_repository.get_by_id.return_value = _task_record(estado="PENDIENTE")
+        self.task_repository.append_evidences.return_value = _task_record(estado="EN_PROCESO")
+        captured_at = datetime(2026, 10, 27, 16, 14, 45, tzinfo=timezone.utc)
+        cache = Mock()
+        cache.store_thumbnail_from_image.return_value = Mock(cache_status="test", size_bytes=0)
+        cache.store_video_thumbnail.return_value = Mock(cache_status="test", size_bytes=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_video = root / "source.mp4"
+            subprocess.run(
+                [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                 "-i", "color=c=white:s=640x480:d=1", "-c:v", "libx264", str(source_video)],
+                check=True, capture_output=True,
+            )
+            photo = BytesIO()
+            Image.new("RGB", (640, 480), "white").save(photo, format="JPEG")
+            uploads = [
+                UploadFile(file=BytesIO(photo.getvalue()), filename="foto.jpg",
+                           headers=Headers({"content-type": "image/jpeg"})),
+                UploadFile(file=BytesIO(source_video.read_bytes()), filename="video.mp4",
+                           headers=Headers({"content-type": "video/mp4"})),
+            ]
+            with (
+                patch("app.services.tareas_service.get_settings", return_value=Mock(evidencias_path=directory)),
+                patch("app.services.tareas_service.get_evidence_cache", return_value=cache),
+                patch("app.services.evidence_watermark._capture_label", wraps=_capture_label) as label,
+            ):
+                self.service.upload_evidence(
+                    self.db, tarea_id=1, tipo_documento="CC", identificacion="1080017116",
+                    files=uploads, captured_at=[captured_at, captured_at],
+                    latitude=[4.60971, 4.557637758636031],
+                    longitude=[-74.08175, -74.15112735809976],
+                )
+
+            self.assertEqual(label.call_count, 2)
+            for call, coordinates in zip(
+                label.call_args_list,
+                [(4.60971, -74.08175), (4.557637758636031, -74.15112735809976)],
+            ):
+                date, operator, latitude, longitude = call.args
+                self.assertEqual(date.strftime("%d/%m/%Y %H:%M:%S"), "27/10/2026 11:14:45")
+                self.assertEqual((operator, latitude, longitude), (809772, *coordinates))
+            records = self.task_repository.append_evidences.call_args.kwargs["evidencias"]
+            self.assertEqual(
+                [record["ubicacion"] for record in records],
+                [
+                    "Longitud -74.08175, latitud 4.60971",
+                    "Longitud -74.15112735809976, latitud 4.557637758636031",
+                ],
+            )
+            stored_photo = root / records[0]["ruta"].lstrip("/")
+            stored_video = root / records[1]["ruta"].lstrip("/")
+            frame = root / "frame.png"
+            subprocess.run(
+                [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(stored_video),
+                 "-frames:v", "1", str(frame)],
+                check=True, capture_output=True,
+            )
+            for path in (stored_photo, frame):
+                with Image.open(path) as image:
+                    self.assertLess(image.crop((320, 350, 640, 480)).convert("L").getextrema()[0], 100)
 
     def test_upload_rejects_missing_or_invalid_capture_metadata(self) -> None:
         self.task_repository.get_by_id.return_value = _task_record(estado="PENDIENTE")

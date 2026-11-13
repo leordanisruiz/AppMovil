@@ -16,6 +16,8 @@ import {
   View,
 } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { getApiErrorMessage } from '../services/authService';
 import { tareasService } from '../services/tareasService';
 import { colors, radius, spacing, typography } from '../theme';
@@ -110,10 +112,15 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
       await queryClient.invalidateQueries({ queryKey: ['tareas'] });
       selectedAssets.forEach(releaseWebAsset);
       setSelectedAssets([]);
-      setActionError(null);
-      setActionSuccess(
-        `${evidencias_agregadas} evidencia${evidencias_agregadas === 1 ? '' : 's'} subida${evidencias_agregadas === 1 ? '' : 's'}. La tarea está en proceso.`,
-      );
+      const uploadedEvidence = tarea.evidencias.slice(-evidencias_agregadas);
+      const missingLocation = uploadedEvidence.length !== evidencias_agregadas
+        || uploadedEvidence.some((evidence) => !evidence.ubicacion);
+      setActionError(missingLocation
+        ? 'La API confirmó la carga, pero no devolvió la ubicación de las evidencias. No las vuelvas a subir; verifica que la web esté conectada al backend actualizado.'
+        : null);
+      setActionSuccess(missingLocation
+        ? null
+        : `${evidencias_agregadas} evidencia${evidencias_agregadas === 1 ? '' : 's'} subida${evidencias_agregadas === 1 ? '' : 's'}. La tarea está en proceso.`);
     },
     onError: (error: unknown) => {
       setActionError(
@@ -225,6 +232,53 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
     setTimeout(() => void runPendingPickerAction(), 500);
   };
 
+  const captureNativePhoto = async () => {
+    try {
+      const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!cameraPermission.granted) {
+        setActionError('Debes permitir el acceso a la cámara para tomar evidencias.');
+        return;
+      }
+      const locationPermission = await Location.requestForegroundPermissionsAsync();
+      if (!locationPermission.granted) {
+        setActionError('Debes permitir la ubicación para agregar cada evidencia. Revisa los permisos del dispositivo.');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.9,
+        exif: true,
+      });
+      if (result.canceled) return;
+
+      const picture = result.assets[0];
+      const capturedAt = new Date().toISOString();
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      if (Math.abs(Date.now() - position.timestamp) > 30000) {
+        throw new Error('La ubicación no está actualizada. Activa el GPS e inténtalo nuevamente.');
+      }
+      if (!Number.isFinite(position.coords.latitude) || !Number.isFinite(position.coords.longitude)
+          || Math.abs(position.coords.latitude) > 90 || Math.abs(position.coords.longitude) > 180) {
+        throw new Error('La ubicación obtenida no es válida. Inténtalo nuevamente.');
+      }
+
+      const mimeType = picture.mimeType ?? 'image/jpeg';
+      const extension = mimeType === 'image/heic' || mimeType === 'image/heif' ? 'heic' : 'jpg';
+      addAssets([{
+        uri: picture.uri,
+        name: picture.fileName ?? `foto-${Date.now()}.${extension}`,
+        mimeType,
+        size: picture.fileSize,
+        capturedAt,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      }]);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'No fue posible tomar la foto.');
+    }
+  };
+
   const removeAsset = (uri: string) => {
     const removed = selectedAssets.find((asset) => asset.uri === uri);
     if (removed) releaseWebAsset(removed);
@@ -312,7 +366,9 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
           visible={isSourcePickerVisible}
           onDismiss={() => void runPendingPickerAction()}
           onClose={() => setIsSourcePickerVisible(false)}
-          onTakePhoto={() => launchPickerAfterDismiss(async () => setCameraMode('photo'))}
+          onTakePhoto={() => launchPickerAfterDismiss(
+            Platform.OS === 'web' ? async () => setCameraMode('photo') : captureNativePhoto,
+          )}
           onRecordVideo={() => launchPickerAfterDismiss(async () => setCameraMode('video'))}
         />
         {cameraMode && (

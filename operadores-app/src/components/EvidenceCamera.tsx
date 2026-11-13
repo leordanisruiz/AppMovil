@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions, type CameraType, type FlashMode } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { TaskEvidenceAsset } from '../types/tarea';
@@ -137,6 +138,58 @@ export function EvidenceCamera({
     setIsStopping(false);
     let audio: MediaStream | null = null;
     try {
+      // On native platforms, use the system camera UI so the person can review,
+      // retake, or cancel the photo before it is attached to the task.
+      if (mode === 'photo' && Platform.OS !== 'web') {
+        const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!active.current) return;
+        if (!cameraPermission.granted) {
+          throw new Error('Debes permitir el acceso a la cámara para tomar evidencias.');
+        }
+
+        const locationPermission = await Location.requestForegroundPermissionsAsync();
+        if (!active.current) return;
+        if (!locationPermission.granted) {
+          throw new Error('Debes permitir la ubicación para agregar cada evidencia. Revisa los permisos del dispositivo.');
+        }
+
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          quality: 0.9,
+          exif: true,
+          cameraType: facing === 'front' ? ImagePicker.CameraType.front : ImagePicker.CameraType.back,
+        });
+        if (!active.current || result.canceled) return;
+
+        const picture = result.assets[0];
+        const capturedAt = new Date().toISOString();
+        const position = await Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('No fue posible obtener la ubicación. Activa el GPS e inténtalo nuevamente.')), 20000)),
+        ]);
+        if (!active.current) return;
+        if (!Number.isFinite(position.timestamp) || Math.abs(Date.now() - position.timestamp) > 30000) {
+          throw new Error('La ubicación no está actualizada. Activa el GPS e inténtalo nuevamente.');
+        }
+        if (!Number.isFinite(position.coords.latitude) || !Number.isFinite(position.coords.longitude)
+            || Math.abs(position.coords.latitude) > 90 || Math.abs(position.coords.longitude) > 180) {
+          throw new Error('La ubicación obtenida no es válida. Inténtalo nuevamente.');
+        }
+
+        const mimeType = picture.mimeType ?? 'image/jpeg';
+        const extension = mimeType === 'image/heic' || mimeType === 'image/heif' ? 'heic' : 'jpg';
+        onCapture({
+          uri: picture.uri,
+          name: picture.fileName ?? `foto-${Date.now()}.${extension}`,
+          mimeType,
+          size: picture.fileSize,
+          capturedAt,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        return;
+      }
+
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!active.current) return;
       if (!permission.granted) {
@@ -183,11 +236,6 @@ export function EvidenceCamera({
           );
           if (!active.current) return;
           onCapture({ uri: URL.createObjectURL(blob), webFile: blob, name: `foto-${Date.now()}.jpg`, mimeType: 'image/jpeg', size: blob.size, capturedAt, ...location });
-        } else {
-          const picture = await camera.current?.takePictureAsync({ quality: 0.9 });
-          if (!active.current) return;
-          if (!picture) throw new Error('No fue posible capturar la imagen.');
-          onCapture({ uri: picture.uri, name: `foto-${Date.now()}.jpg`, mimeType: 'image/jpeg', capturedAt, ...location });
         }
       } else if (Platform.OS === 'web') {
         const videoStream = webVideo.current?.srcObject;
