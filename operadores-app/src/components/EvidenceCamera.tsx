@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions, useMicrophonePermissions, type CameraType, type FlashMode } from 'expo-camera';
 import * as Location from 'expo-location';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import type { TaskEvidenceAsset } from '../types/tarea';
 
 type CaptureMode = 'photo' | 'video';
+
+const MAX_VIDEO_SECONDS = 180;
 
 export function EvidenceCamera({
   mode, onClose, onCapture,
@@ -18,56 +21,120 @@ export function EvidenceCamera({
   const recorder = useRef<MediaRecorder | null>(null);
   const active = useRef(false);
   const capturing = useRef(false);
+  const stopping = useRef(false);
+  const nativeRecordingReady = useRef(false);
+  const lastWebFacing = useRef<CameraType>('back');
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [, requestMicrophonePermission] = useMicrophonePermissions();
+  const [facing, setFacing] = useState<CameraType>('back');
+  const [flash, setFlash] = useState<FlashMode>('off');
+  const [torch, setTorch] = useState(false);
+  const [zoom, setZoom] = useState(0);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let open = true;
     active.current = true;
-    let stream: MediaStream | null = null;
-    const openCamera = async () => {
+    const requestPermission = async () => {
+      if (Platform.OS === 'web') return;
       try {
-        if (Platform.OS === 'web') {
-          if (!navigator.mediaDevices?.getUserMedia) {
-            throw new Error('La cámara requiere HTTPS o localhost y un navegador compatible.');
-          }
-          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-          if (!open) {
-            stream.getTracks().forEach((track) => track.stop());
-            return;
-          }
-          if (!webVideo.current) throw new Error('No fue posible mostrar la cámara.');
-          webVideo.current.srcObject = stream;
-          await webVideo.current.play();
-          if (open) setReady(true);
-        } else {
-          const permission = await requestCameraPermission();
-          if (!permission.granted && open) {
-            setError('Debes permitir el acceso a la cámara para tomar evidencias.');
-          }
+        const permission = await requestCameraPermission();
+        if (!permission.granted && open) {
+          setError('Debes permitir el acceso a la cámara para tomar evidencias.');
         }
       } catch (cause) {
         if (open) setError(cause instanceof Error ? cause.message : 'No fue posible abrir la cámara.');
       }
     };
-    void openCamera();
+    void requestPermission();
     return () => {
       open = false;
       active.current = false;
       if (recorder.current?.state === 'recording') recorder.current.stop();
+    };
+  }, [requestCameraPermission]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    let open = true;
+    let stream: MediaStream | null = null;
+    const openCamera = async () => {
+      setReady(false);
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('La cámara requiere HTTPS o localhost y un navegador compatible.');
+        }
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facing === 'front'
+              ? { exact: 'user' }
+              : facing === lastWebFacing.current ? 'environment' : { exact: 'environment' },
+          },
+        });
+        if (!open) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        if (!webVideo.current) throw new Error('No fue posible mostrar la cámara.');
+        webVideo.current.srcObject = stream;
+        await webVideo.current.play();
+        if (open) {
+          lastWebFacing.current = facing;
+          setReady(true);
+        }
+      } catch (cause) {
+        stream?.getTracks().forEach((track) => track.stop());
+        if (open) {
+          if (facing !== lastWebFacing.current) {
+            setError('No fue posible cambiar de cámara. Comprueba que el dispositivo tenga la cámara solicitada.');
+            setFacing(lastWebFacing.current);
+          } else {
+            setError(cause instanceof Error ? cause.message : 'No fue posible abrir la cámara.');
+          }
+        }
+      }
+    };
+    void openCamera();
+    return () => {
+      open = false;
       stream?.getTracks().forEach((track) => track.stop());
     };
-  }, [mode, requestCameraPermission]);
+  }, [facing]);
+
+  const switchCamera = () => {
+    setError(null);
+    setReady(false);
+    setFlash('off');
+    setTorch(false);
+    setZoom(0);
+    setFacing((current) => current === 'back' ? 'front' : 'back');
+  };
+
+  const stopRecording = () => {
+    if (stopping.current) return;
+    stopping.current = true;
+    setIsStopping(true);
+    if (Platform.OS === 'web') {
+      if (recorder.current?.state === 'recording') recorder.current.stop();
+    } else if (nativeRecordingReady.current) {
+      camera.current?.stopRecording();
+    }
+  };
 
   const capture = async () => {
     if (!ready || capturing.current) return;
     capturing.current = true;
     setBusy(true);
     setError(null);
+    setElapsedSeconds(0);
+    stopping.current = false;
+    nativeRecordingReady.current = false;
+    setIsStopping(false);
     let audio: MediaStream | null = null;
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
@@ -81,7 +148,7 @@ export function EvidenceCamera({
         if (!microphone.granted) throw new Error('Debes permitir el micrófono para grabar videos.');
       }
       if (mode === 'video' && Platform.OS === 'web') {
-        if (!MediaRecorder.isTypeSupported('video/mp4')) {
+        if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported('video/mp4')) {
           throw new Error('Este navegador no permite grabar video MP4. Usa la aplicación móvil u otro navegador compatible.');
         }
         audio = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -135,21 +202,30 @@ export function EvidenceCamera({
           mediaRecorder.onerror = () => reject(new Error('No fue posible grabar el video.'));
         });
         mediaRecorder.start();
+        const startedAt = performance.now();
         setRecording(true);
-        const timer = setTimeout(() => { if (mediaRecorder.state === 'recording') mediaRecorder.stop(); }, 180000);
+        const progressTimer = setInterval(() => {
+          if (active.current && mediaRecorder.state === 'recording') {
+            setElapsedSeconds(Math.floor((performance.now() - startedAt) / 1000));
+          }
+        }, 250);
+        const limitTimer = setTimeout(() => {
+          if (mediaRecorder.state === 'recording') stopRecording();
+        }, MAX_VIDEO_SECONDS * 1000);
         try {
           const blob = await result;
           if (!active.current) return;
           if (!blob.size) throw new Error('El video grabado está vacío.');
           onCapture({ uri: URL.createObjectURL(blob), webFile: blob, name: `video-${Date.now()}.mp4`, mimeType: 'video/mp4', size: blob.size, capturedAt, ...location });
         } finally {
-          clearTimeout(timer);
+          clearInterval(progressTimer);
+          clearTimeout(limitTimer);
           recorder.current = null;
         }
       } else {
         if (!camera.current) throw new Error('La cámara aún no está lista.');
         setRecording(true);
-        const video = await camera.current.recordAsync({ maxDuration: 180 });
+        const video = await camera.current.recordAsync({ maxDuration: MAX_VIDEO_SECONDS });
         if (!active.current) return;
         if (!video) throw new Error('No fue posible grabar el video.');
         const isMov = Platform.OS === 'ios';
@@ -162,6 +238,7 @@ export function EvidenceCamera({
       capturing.current = false;
       if (active.current) {
         setRecording(false);
+        setIsStopping(false);
         setBusy(false);
       }
     }
@@ -169,32 +246,89 @@ export function EvidenceCamera({
 
   return (
     <Modal visible animationType="slide" onRequestClose={() => { if (!busy) onClose(); }}>
-      <View style={styles.container}>
+      <SafeAreaView edges={['top', 'bottom']} style={styles.container}>
         {Platform.OS === 'web'
           ? <video ref={webVideo} muted playsInline style={{ width: '100%', flex: 1, objectFit: 'contain' }} />
-          : cameraPermission?.granted ? <CameraView ref={camera} mode={mode === 'video' ? 'video' : 'picture'} style={styles.preview}
-              onCameraReady={() => setReady(true)} onMountError={(event) => setError(event.message)} /> : null}
+          : cameraPermission?.granted ? <CameraView key={facing} ref={camera} mode={mode === 'video' ? 'video' : 'picture'} style={styles.preview}
+              facing={facing} flash={flash} enableTorch={torch} zoom={zoom}
+              onCameraReady={() => setReady(true)}
+              onMountError={(event) => { setReady(false); setError(event.message); }}
+              onRecordingProgress={({ duration }) => {
+                if (capturing.current) {
+                  if (!nativeRecordingReady.current) {
+                    nativeRecordingReady.current = true;
+                    if (stopping.current) camera.current?.stopRecording();
+                  }
+                  if (!stopping.current && Number.isFinite(duration)) {
+                    setElapsedSeconds(Math.max(0, Math.floor(duration)));
+                  }
+                }
+              }} /> : null}
+        {recording && !isStopping ? (
+          <View style={styles.recordingIndicator}>
+            <View style={styles.recordingDot} />
+            <Text style={styles.recordingText}>
+              Grabando {String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:{String(elapsedSeconds % 60).padStart(2, '0')} / 03:00
+            </Text>
+          </View>
+        ) : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+        <View style={styles.controls}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={busy || (!ready && !error)}
+            onPress={switchCamera}
+            style={[styles.controlButton, (busy || (!ready && !error)) && styles.disabled]}
+          >
+            <Text style={styles.text}>Cambiar cámara</Text>
+          </Pressable>
+          {Platform.OS !== 'web' && facing === 'back' ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={!ready || (busy && (!recording || mode === 'photo' || isStopping))}
+              onPress={() => {
+                if (mode === 'video') setTorch((current) => !current);
+                else setFlash((current) => current === 'off' ? 'on' : current === 'on' ? 'auto' : 'off');
+              }}
+              style={[styles.controlButton, (!ready || (busy && (!recording || mode === 'photo' || isStopping))) && styles.disabled]}
+            >
+              <Text style={styles.text}>
+                {mode === 'video' ? `Linterna: ${torch ? 'sí' : 'no'}` : `Flash: ${flash === 'off' ? 'no' : flash === 'on' ? 'sí' : 'auto'}`}
+              </Text>
+            </Pressable>
+          ) : null}
+          {Platform.OS !== 'web' ? (
+            <>
+              <Pressable accessibilityRole="button" accessibilityLabel="Alejar zoom"
+                disabled={!ready || zoom === 0 || (busy && (!recording || isStopping))}
+                onPress={() => setZoom((current) => Math.max(0, Math.round((current - 0.1) * 10) / 10))}
+                style={[styles.controlButton, (!ready || zoom === 0 || (busy && (!recording || isStopping))) && styles.disabled]}>
+                <Text style={styles.text}>−</Text>
+              </Pressable>
+              <Text style={styles.zoomText}>Zoom {Math.round(zoom * 100)}%</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Acercar zoom"
+                disabled={!ready || zoom === 1 || (busy && (!recording || isStopping))}
+                onPress={() => setZoom((current) => Math.min(1, Math.round((current + 0.1) * 10) / 10))}
+                style={[styles.controlButton, (!ready || zoom === 1 || (busy && (!recording || isStopping))) && styles.disabled]}>
+                <Text style={styles.text}>+</Text>
+              </Pressable>
+            </>
+          ) : null}
+        </View>
         <Text style={styles.hint}>La ubicación es obligatoria para cada evidencia.</Text>
         <View style={styles.actions}>
-          <Pressable disabled={busy} onPress={onClose} style={styles.button}><Text style={styles.text}>Cancelar</Text></Pressable>
+          <Pressable accessibilityRole="button" disabled={busy} onPress={onClose} style={[styles.button, busy && styles.disabled]}><Text style={styles.text}>Cancelar</Text></Pressable>
           {recording ? (
-            <Pressable onPress={() => {
-              if (Platform.OS === 'web') {
-                if (recorder.current?.state === 'recording') recorder.current.stop();
-              } else {
-                camera.current?.stopRecording();
-              }
-            }} style={styles.button}>
-              <Text style={styles.text}>Detener grabación</Text>
+            <Pressable accessibilityRole="button" disabled={isStopping} onPress={stopRecording} style={[styles.button, isStopping && styles.disabled]}>
+              <Text style={styles.text}>{isStopping ? 'Guardando video...' : 'Detener grabación'}</Text>
             </Pressable>
           ) : (
-            <Pressable disabled={!ready || busy} onPress={() => void capture()} style={styles.button}>
+            <Pressable accessibilityRole="button" disabled={!ready || busy} onPress={() => void capture()} style={[styles.button, (!ready || busy) && styles.disabled]}>
               {busy ? <ActivityIndicator color="white" /> : <Text style={styles.text}>{mode === 'photo' ? 'Tomar foto' : 'Grabar video'}</Text>}
             </Pressable>
           )}
         </View>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -202,9 +336,16 @@ export function EvidenceCamera({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#171717' },
   preview: { flex: 1 },
+  recordingIndicator: { alignItems: 'center', alignSelf: 'center', backgroundColor: '#252525', borderRadius: 16, flexDirection: 'row', gap: 8, marginTop: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  recordingDot: { backgroundColor: '#e12626', borderRadius: 5, height: 10, width: 10 },
+  recordingText: { color: '#fff', fontWeight: '700' },
   error: { color: '#fff', backgroundColor: '#8b2e00', padding: 12 },
-  hint: { color: '#fff', padding: 12, textAlign: 'center' },
-  actions: { flexDirection: 'row', justifyContent: 'space-around', padding: 16 },
+  controls: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', paddingHorizontal: 12, paddingTop: 12 },
+  controlButton: { backgroundColor: '#444', borderRadius: 8, minHeight: 40, justifyContent: 'center', paddingHorizontal: 12 },
+  zoomText: { color: '#fff', fontWeight: '700' },
+  disabled: { opacity: 0.45 },
+  hint: { color: '#fff', paddingHorizontal: 12, paddingTop: 10, textAlign: 'center' },
+  actions: { flexDirection: 'row', justifyContent: 'space-around', padding: 12 },
   button: { backgroundColor: '#d90000', borderRadius: 10, padding: 14, minWidth: 120, alignItems: 'center' },
   text: { color: '#fff', fontWeight: '700' },
 });

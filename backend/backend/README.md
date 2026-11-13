@@ -288,7 +288,10 @@ actualizarse para enviar los metadatos requeridos.
 La cámara y ubicación web requieren HTTPS o localhost; la grabación web requiere
 un navegador que admita MP4 con MediaRecorder. En móvil se requiere una nueva
 compilación con los permisos de cámara, micrófono y ubicación. Los videos no
-pueden superar tres minutos.
+pueden superar tres minutos. La cámara integrada muestra el tiempo de grabación
+y permite cambiar entre las cámaras frontal y trasera antes de capturar. En
+móvil también ofrece controles de flash, linterna y zoom según el dispositivo;
+en web, el cambio de cámara depende de la compatibilidad del navegador.
 
 Docker corre Linux y no puede usar directamente una ruta UNC de Windows. Monte
 el recurso SMB en el host/container y configure, por ejemplo,
