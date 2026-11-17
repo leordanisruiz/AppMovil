@@ -265,7 +265,7 @@ export function TaskAssignmentSection() {
               onPress={() => chooseNovelty(novelty)} style={styles.operatorResult}>
               <View style={styles.resultCopy}>
                 <Text style={styles.operatorName}>
-                  {novelty.categoria === 'ico' ? 'ICO' : 'Inasistencia'} #{novelty.id_novedad}
+                  {noveltyCategoryLabel(novelty.categoria)} #{novelty.id_novedad}
                 </Text>
                 <Text style={styles.secondaryText}>
                   {novelty.nombre_completo ?? 'Operador'} · Código {novelty.codigo}
@@ -481,7 +481,7 @@ function NoveltyRow({
             {selected ? <Text style={styles.checkmark}>✓</Text> : null}
           </View>
           <View style={styles.noveltyCopy}>
-            <Text style={styles.noveltyTitle}>{novelty.categoria === 'ico' ? 'ICO' : 'Inasistencia'} #{novelty.id_novedad}</Text>
+            <Text style={styles.noveltyTitle}>{noveltyCategoryLabel(novelty.categoria)} #{novelty.id_novedad}</Text>
             <Text numberOfLines={2} style={styles.secondaryText}>
               {novelty.tipo_novedad ?? 'Novedad'} ·{' '}
               {formatNoveltyDate(novelty.fecha_novedad)}
@@ -510,6 +510,8 @@ function NoveltyRow({
           <DetailField label="Tipo de novedad" value={novelty.tipo_novedad} />
           <DetailField label="Descripción" value={novelty.descripcion} />
           {novelty.categoria !== 'ico' ? <DetailField label="Estado" value={novelty.estado} /> : null}
+          {novelty.categoria === 'danos' ? <DetailField label="Vehículo" value={novelty.vehiculo} /> : null}
+          {novelty.categoria === 'danos' ? <DetailField label="Ruta" value={novelty.ruta} /> : null}
         </View>
       ) : null}
     </View>
@@ -518,6 +520,10 @@ function NoveltyRow({
 
 function noveltyKey(novelty: AssignableNovelty): string {
   return `${novelty.categoria}:${novelty.id_novedad}`;
+}
+
+function noveltyCategoryLabel(category: AssignableNovelty['categoria']): string {
+  return category === 'ico' ? 'ICO' : category === 'danos' ? 'Daño Operativo' : 'Inasistencia';
 }
 
 function DetailField({ label, value }: { label: string; value: string | number | null | undefined }) {

@@ -42,6 +42,15 @@ class ExpoPushClient:
             channel_id=NOVELTY_CHANNEL_ID,
         )
 
+    def send_operational_damage(self, token: str, novelty_id: int) -> str:
+        return self._send_message(
+            token,
+            title="Nueva Novedad",
+            body=f"Tiene una novedad Daño Operativo #{novelty_id} por favor revise la información",
+            data={"tipo": "novedad", "id_novedad": novelty_id, "categoria": "danos"},
+            channel_id=NOVELTY_CHANNEL_ID,
+        )
+
     def send_task_assignment(
         self,
         token: str,

@@ -386,7 +386,7 @@ function CreatedTaskDetail({
             {(task.novedades_referencias?.length
               ? task.novedades_referencias.map((item) => ({
                   key: `${item.categoria}:${item.id_novedad}`,
-                  label: `${item.categoria === 'ico' ? 'ICO' : 'Inasistencia'} #${item.id_novedad}`,
+                  label: `${noveltyCategoryLabel(item.categoria)} #${item.id_novedad}`,
                 }))
               : task.novedades_ids.map((id) => ({ key: String(id), label: `Novedad #${id}` }))
             ).map((novelty) => (
@@ -522,13 +522,17 @@ function getStatusLabel(status: TaskStatus): string {
 function getClosedMessage(task: OperatorTask): string {
   const noveltyNumbers = task.novedades_referencias?.length
     ? task.novedades_referencias.map((item) =>
-        `${item.categoria === 'ico' ? 'ICO' : 'Inasistencia'} #${item.id_novedad}`,
+        `${noveltyCategoryLabel(item.categoria)} #${item.id_novedad}`,
       ).join(', ')
     : task.novedades_ids.map((id) => `#${id}`).join(', ');
   const noveltyCount = task.novedades_referencias?.length || task.novedades_ids.length;
   return noveltyNumbers
     ? `La tarea #${task.id} quedó en estado CERRADO. Novedad${noveltyCount > 1 ? 'es asociadas' : ' asociada'}: ${noveltyNumbers}.`
     : `La tarea #${task.id} quedó en estado CERRADO.`;
+}
+
+function noveltyCategoryLabel(category: 'ico' | 'inasistencias' | 'danos'): string {
+  return category === 'ico' ? 'ICO' : category === 'danos' ? 'Daño Operativo' : 'Inasistencia';
 }
 
 function formatDate(value: string): string {

@@ -3,6 +3,8 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, radius, spacing } from '../theme';
 import type { OperatorTask, TaskStatus } from '../types/tarea';
 
+const PAGE_SIZE = 8;
+
 export type TaskStatusFilter = 'TODAS' | TaskStatus;
 
 export function DesktopTasksTable({
@@ -17,12 +19,18 @@ export function DesktopTasksTable({
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>(initialStatus);
   const [newestFirst, setNewestFirst] = useState(true);
+  const [pageState, setPageState] = useState({ key: '', page: 1 });
 
   const filtered = useMemo(() => tasks
     .filter((task) => statusFilter === 'TODAS' || task.estado === statusFilter)
     .filter((task) => `${task.id} ${task.tipo_tarea} ${task.descripcion}`.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => (new Date(a.fecha_creacion).getTime() - new Date(b.fecha_creacion).getTime()) * (newestFirst ? -1 : 1)), [newestFirst, query, statusFilter, tasks]);
   const filters: TaskStatusFilter[] = ['TODAS', 'PENDIENTE', 'EN_PROCESO', 'COMPLETADA', 'CERRADO'];
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageKey = `${query}\u0000${statusFilter}\u0000${newestFirst}`;
+  const currentPage = Math.min(pageState.key === pageKey ? pageState.page : 1, pageCount);
+  const pageTasks = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const changePage = (nextPage: number) => setPageState({ key: pageKey, page: nextPage });
 
   return (
     <View style={styles.layout}>
@@ -35,9 +43,10 @@ export function DesktopTasksTable({
         <View style={styles.toolbar}><View><Text style={styles.heading}>Tareas</Text><Text style={styles.subheading}>{filtered.length} resultados</Text></View><View style={styles.controls}><TextInput accessibilityLabel="Buscar tareas" onChangeText={setQuery} placeholder="Buscar por tarea o descripción…" placeholderTextColor="#929AA4" style={styles.search} value={query}/><Pressable accessibilityRole="button" onPress={() => setNewestFirst((current) => !current)} style={styles.sortButton}><Text style={styles.sortText}>↕  Fecha {newestFirst ? 'más reciente' : 'más antigua'}</Text></Pressable></View></View>
         <View style={styles.table}>
           <View style={styles.tableHeader}><Text style={[styles.tableHeaderText, styles.taskColumn]}>TAREA</Text><Text style={[styles.tableHeaderText, styles.descriptionColumn]}>DESCRIPCIÓN</Text><Text style={[styles.tableHeaderText, styles.dateColumn]}>FECHA</Text><Text style={[styles.tableHeaderText, styles.evidenceColumn]}>EVIDENCIAS</Text><Text style={[styles.tableHeaderText, styles.statusColumn]}>ESTADO</Text><Text style={styles.arrowColumn}/></View>
-          {filtered.map((task) => <Pressable key={task.id} onPress={() => onOpen(task)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}><View style={styles.taskColumn}><Text style={styles.taskId}>#{task.id}</Text><Text numberOfLines={1} style={styles.taskType}>{task.tipo_tarea}</Text></View><Text numberOfLines={2} style={[styles.cell, styles.descriptionColumn]}>{task.descripcion}</Text><Text style={[styles.cell, styles.dateColumn]}>{formatDate(task.fecha_creacion)}</Text><Text style={[styles.cell, styles.evidenceColumn]}>{task.evidencias.length} archivo{task.evidencias.length === 1 ? '' : 's'}</Text><View style={styles.statusColumn}><Text style={[styles.status, { backgroundColor: statusTone(task.estado).background, color: statusTone(task.estado).text }]}>● {statusLabel(task.estado)}</Text></View><Text style={styles.arrow}>›</Text></Pressable>)}
+          {pageTasks.map((task) => <Pressable key={task.id} onPress={() => onOpen(task)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}><View style={styles.taskColumn}><Text style={styles.taskId}>#{task.id}</Text><Text numberOfLines={1} style={styles.taskType}>{task.tipo_tarea}</Text></View><Text numberOfLines={2} style={[styles.cell, styles.descriptionColumn]}>{task.descripcion}</Text><Text style={[styles.cell, styles.dateColumn]}>{formatDate(task.fecha_creacion)}</Text><Text style={[styles.cell, styles.evidenceColumn]}>{task.evidencias.length} archivo{task.evidencias.length === 1 ? '' : 's'}</Text><View style={styles.statusColumn}><Text style={[styles.status, { backgroundColor: statusTone(task.estado).background, color: statusTone(task.estado).text }]}>● {statusLabel(task.estado)}</Text></View><Text style={styles.arrow}>›</Text></Pressable>)}
           {!filtered.length ? <View style={styles.noResults}><Text style={styles.cell}>No encontramos tareas con estos filtros.</Text></View> : null}
         </View>
+        <View style={styles.pagination}><Text style={styles.cell}>{filtered.length ? `${(currentPage - 1) * PAGE_SIZE + 1}–${Math.min(currentPage * PAGE_SIZE, filtered.length)} de ${filtered.length}` : '0 tareas'}</Text><View style={styles.paginationActions}><Pressable accessibilityRole="button" disabled={currentPage <= 1} onPress={() => changePage(currentPage - 1)} style={[styles.pageButton, currentPage <= 1 && styles.pageButtonDisabled]}><Text style={styles.pageButtonText}>‹</Text></Pressable><Text style={styles.cell}>{currentPage} / {pageCount}</Text><Pressable accessibilityRole="button" disabled={currentPage >= pageCount} onPress={() => changePage(currentPage + 1)} style={[styles.pageButton, currentPage >= pageCount && styles.pageButtonDisabled]}><Text style={styles.pageButtonText}>›</Text></Pressable></View></View>
       </View>
     </View>
   );
@@ -100,4 +109,9 @@ const styles = StyleSheet.create({
   arrowColumn: { width: 20 },
   arrow: { color: colors.primary, fontSize: 22, textAlign: 'right', width: 20 },
   noResults: { alignItems: 'center', padding: spacing.large },
+  pagination: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingTop: 8 },
+  paginationActions: { alignItems: 'center', flexDirection: 'row', gap: 12 },
+  pageButton: { alignItems: 'center', backgroundColor: colors.white, borderColor: colors.border, borderRadius: 8, borderWidth: 1, height: 34, justifyContent: 'center', width: 38 },
+  pageButtonDisabled: { opacity: 0.45 },
+  pageButtonText: { color: colors.text, fontSize: 20 },
 });

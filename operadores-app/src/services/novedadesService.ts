@@ -8,8 +8,8 @@ export const novedadesService = {
       throw new Error('No se puede consultar novedades sin código de operador.');
     }
 
-    const [ico, inasistencias] = await Promise.all(
-      (['ico', 'inasistencias'] as const).map((categoria) =>
+    const [ico, inasistencias, danos] = await Promise.all(
+      (['ico', 'inasistencias', 'danos'] as const).map((categoria) =>
         httpClient.post<NovedadesResponse>(
           '/novedades/consultar',
           { codigo_operador: operatorCode, categoria },
@@ -17,8 +17,8 @@ export const novedadesService = {
       ),
     );
     return {
-      total: ico.data.total + inasistencias.data.total,
-      categorias: { ico: ico.data, inasistencias: inasistencias.data },
+      total: ico.data.total + inasistencias.data.total + danos.data.total,
+      categorias: { ico: ico.data, inasistencias: inasistencias.data, danos: danos.data },
     };
   },
 };

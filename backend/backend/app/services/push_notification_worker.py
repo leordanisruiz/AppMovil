@@ -161,7 +161,11 @@ class PushNotificationWorker:
                         ),
                     )
             else:
-                ticket_id = self._push_client.send(token, novelty_id)
+                novelty_group = str(delivery.get("novelty_group") or "")
+                if "DA" in novelty_group.upper() and any(char in novelty_group.upper() for char in ("Ñ", "N", "Ã")):
+                    ticket_id = self._push_client.send_operational_damage(token, novelty_id)
+                else:
+                    ticket_id = self._push_client.send(token, novelty_id)
         except ExpoInvalidPushToken as exc:
             self._finish_failed(
                 delivery_id,

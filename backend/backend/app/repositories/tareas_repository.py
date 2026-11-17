@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
-from app.repositories.novedades_repository import ICO_FILTER, INASISTENCIAS_FILTER
+from app.repositories.novedades_repository import DANOS_FILTER, ICO_FILTER, INASISTENCIAS_FILTER
 
 _TASK_COLUMNS = """
     id,
@@ -26,15 +26,23 @@ _ASSIGNABLE_NOVELTIES = f"""
            fi."TipoNovedad" AS tipo_novedad, NULL::text AS grupo,
            NULL::text AS subgrupo,
            REGEXP_REPLACE(fi."Descripcion", '(?i)/?reportado por.*$', '') AS descripcion,
-           NULL::text AS estado, 'ico'::text AS categoria
+           NULL::text AS estado, 'ico'::text AS categoria,
+           NULL::text AS vehiculo, NULL::text AS ruta
     FROM "DW_SUMA"."FactICO" AS fi
     WHERE {ICO_FILTER}
     UNION ALL
     SELECT fns."Id", fns."FechaIngreso", BTRIM(fns."Codigo"::text),
            fns."Novedad", fns."Grupo", fns."Subgrupo", fns."Detalle",
-           fns."Estado", 'inasistencias'::text
+           fns."Estado", 'inasistencias'::text,
+           NULL::text AS vehiculo, NULL::text AS ruta
     FROM "DW_SUMA"."FactNovedadesSico" AS fns
     WHERE {INASISTENCIAS_FILTER}
+    UNION ALL
+    SELECT fns."Id", fns."FechaIngreso", BTRIM(fns."Codigo"::text),
+           fns."Novedad", fns."Grupo", fns."Subgrupo", fns."Detalle",
+           fns."Estado", 'danos'::text, fns."Vehiculo"::text, fns."Ruta"::text
+    FROM "DW_SUMA"."FactNovedadesSico" AS fns
+    WHERE {DANOS_FILTER}
 """
 
 _ASSIGNABLE_BY_OPERATOR = text(f"""

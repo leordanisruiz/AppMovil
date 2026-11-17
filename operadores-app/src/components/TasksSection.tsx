@@ -40,6 +40,7 @@ type TasksSectionProps = {
 };
 
 const MAX_PHOTOS_PER_TASK = 12;
+const TASK_PAGE_SIZE = 8;
 const MAX_VIDEOS_PER_TASK = 2;
 const MAX_SELECTED_FILES = MAX_PHOTOS_PER_TASK + MAX_VIDEOS_PER_TASK;
 const MAX_SELECTED_SIZE = 100 * 1024 * 1024;
@@ -61,6 +62,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   const { operator } = useAuth();
   const canManageEvidence = operator?.rolId === 1 || operator?.rolId === 2;
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [taskPageState, setTaskPageState] = useState({ operatorCode: '', page: 1 });
   const detailBackSwipe = useMemo(
     () =>
       PanResponder.create({
@@ -93,6 +95,11 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   const pendingPickerAction = useRef<(() => Promise<void>) | null>(null);
   const pickerInProgress = useRef(false);
   const tasksQuery = useTareas(Boolean(operatorCode));
+  const taskList = tasksQuery.data ?? [];
+  const taskPageCount = Math.max(1, Math.ceil(taskList.length / TASK_PAGE_SIZE));
+  const currentTaskPage = Math.min(taskPageState.operatorCode === (operatorCode ?? '') ? taskPageState.page : 1, taskPageCount);
+  const visibleTasks = taskList.slice((currentTaskPage - 1) * TASK_PAGE_SIZE, currentTaskPage * TASK_PAGE_SIZE);
+  const changeTaskPage = (nextPage: number) => setTaskPageState({ operatorCode: operatorCode ?? '', page: nextPage });
   const detailQuery = useQuery({
     queryKey: ['tarea', selectedTaskId],
     queryFn: () => tareasService.getById(selectedTaskId!),
@@ -440,7 +447,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
             }}
           />
         ) : <View style={styles.taskList}>
-          {tasksQuery.data.map((task) => (
+          {visibleTasks.map((task) => (
             <TaskCard
               key={task.id}
               task={task}
@@ -452,6 +459,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
               }}
             />
           ))}
+          <View style={styles.taskPagination}><Text style={styles.taskPaginationLabel}>{(currentTaskPage - 1) * TASK_PAGE_SIZE + 1}–{Math.min(currentTaskPage * TASK_PAGE_SIZE, taskList.length)} de {taskList.length}</Text><View style={styles.taskPaginationActions}><Pressable accessibilityRole="button" disabled={currentTaskPage <= 1} onPress={() => changeTaskPage(currentTaskPage - 1)} style={[styles.taskPageButton, currentTaskPage <= 1 && styles.taskPageButtonDisabled]}><Text style={styles.taskPageButtonText}>‹</Text></Pressable><Text style={styles.taskPaginationLabel}>{currentTaskPage} / {taskPageCount}</Text><Pressable accessibilityRole="button" disabled={currentTaskPage >= taskPageCount} onPress={() => changeTaskPage(currentTaskPage + 1)} style={[styles.taskPageButton, currentTaskPage >= taskPageCount && styles.taskPageButtonDisabled]}><Text style={styles.taskPageButtonText}>›</Text></Pressable></View></View>
         </View>
       ) : (
         <View style={styles.emptyCard}>
@@ -500,6 +508,10 @@ function TaskCard({
       </View>
     </Pressable>
   );
+}
+
+function noveltyCategoryLabel(category: 'ico' | 'inasistencias' | 'danos'): string {
+  return category === 'ico' ? 'ICO' : category === 'danos' ? 'Daño Operativo' : 'Inasistencia';
 }
 
 function TaskDetail({
@@ -559,7 +571,7 @@ function TaskDetail({
             {(task.novedades_referencias?.length
               ? task.novedades_referencias.map((item) => ({
                   key: `${item.categoria}:${item.id_novedad}`,
-                  label: `${item.categoria === 'ico' ? 'ICO' : 'Inasistencia'} #${item.id_novedad}`,
+                  label: `${noveltyCategoryLabel(item.categoria)} #${item.id_novedad}`,
                 }))
               : task.novedades_ids.map((id) => ({ key: String(id), label: `Novedad #${id}` }))
             ).map((novelty) => (
@@ -931,6 +943,12 @@ const styles = StyleSheet.create({
   taskList: {
     gap: spacing.medium,
   },
+  taskPagination: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.small },
+  taskPaginationActions: { alignItems: 'center', flexDirection: 'row', gap: spacing.small },
+  taskPaginationLabel: { color: colors.textMuted, fontSize: typography.caption },
+  taskPageButton: { alignItems: 'center', backgroundColor: colors.white, borderColor: colors.border, borderRadius: radius.small, borderWidth: 1, height: 36, justifyContent: 'center', width: 40 },
+  taskPageButtonDisabled: { opacity: 0.45 },
+  taskPageButtonText: { color: colors.text, fontSize: 20 },
   dropZone: { alignItems: 'center', backgroundColor: '#FFFAFA', borderColor: '#E9CACA', borderRadius: radius.medium, borderStyle: 'dashed', borderWidth: 1, justifyContent: 'center', marginBottom: spacing.medium, minHeight: 78, padding: spacing.medium },
   dropZoneTitle: { color: colors.text, fontSize: typography.small, fontWeight: '800' },
   dropZoneCaption: { color: colors.textMuted, fontSize: typography.overline, marginTop: 4 },

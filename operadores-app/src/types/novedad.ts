@@ -7,6 +7,8 @@ export type Novedad = {
   Subgrupo: string | null;
   Descripcion: string | null;
   Estado: string | null;
+  Vehiculo?: string | null;
+  Ruta?: string | null;
 };
 
 export type NovedadesResponse = {
@@ -18,5 +20,5 @@ export type CategoriaNovedad = 'ico' | 'inasistencias' | 'isv' | 'danos';
 
 export type NovedadesResumen = {
   total: number;
-  categorias: Record<'ico' | 'inasistencias', NovedadesResponse>;
+  categorias: Record<'ico' | 'inasistencias' | 'danos', NovedadesResponse>;
 };

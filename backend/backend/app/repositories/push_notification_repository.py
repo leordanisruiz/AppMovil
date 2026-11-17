@@ -169,6 +169,8 @@ _CLAIM_OUTBOX = text(
      AND device.activo = TRUE
     LEFT JOIN "DW_OPERACIONAL".tareas_operador AS task
       ON task.id = candidates.task_id
+    LEFT JOIN "DW_SUMA"."FactNovedadesSico" AS novelty
+      ON novelty."Id" = candidates.id_novedad
     WHERE delivery.id = candidates.id
       AND delivery.expo_ticket_id IS NULL
     RETURNING
@@ -180,7 +182,8 @@ _CLAIM_OUTBOX = text(
         delivery.intentos,
         device.token_ciphertext,
         task.tipo_tarea,
-        task.novedades_ids
+        task.novedades_ids,
+        novelty."Grupo" AS novelty_group
     """
 )
 

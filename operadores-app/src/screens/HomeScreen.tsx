@@ -92,13 +92,19 @@ const sectionTitles: Record<PortalSection, string> = {
   evidencias: 'Evidencias',
 };
 
-const appVersion = Constants.expoConfig?.version ?? '1.2.1';
+const appVersion = Constants.expoConfig?.version ?? '1.2.2';
 const noveltyCategories: { id: CategoriaNovedad; label: string }[] = [
   { id: 'ico', label: 'ICO' },
   { id: 'isv', label: 'ISV' },
   { id: 'inasistencias', label: 'Inasistencias' },
   { id: 'danos', label: 'Daños operativos' },
 ];
+const noveltyIcons: Record<CategoriaNovedad, string> = {
+  ico: '◉',
+  isv: '⚠',
+  inasistencias: '◷',
+  danos: '🚌',
+};
 
 export function HomeScreen() {
   const { width } = useWindowDimensions();
@@ -173,7 +179,7 @@ export function HomeScreen() {
         ? {
             title: 'Bienvenido a la app de SUMA para Operadores',
             intro: 'Le contamos que cuenta con',
-            message: 'No tienes ICO ni inasistencias para consultar.',
+            message: 'No tienes novedades para consultar.',
             noveltyCount: 0,
             taskCount: notClosedTaskCount,
           }
@@ -490,10 +496,10 @@ export function HomeScreen() {
                       <Pressable key={id} accessibilityRole="button"
                         onPress={() => { setNoveltyCategory(id); selectSection('novedades'); }}
                         style={styles.summaryCard}>
-                        <View style={styles.summaryIcon}><Text style={styles.summaryIconText}>↗</Text></View>
+                        <View style={styles.summaryIcon}><Text style={styles.summaryIconText}>{noveltyIcons[id]}</Text></View>
                         <Text style={styles.summaryLabel}>{label}</Text>
                         <Text style={styles.summaryValue}>{categoryCount(novedades, id)}</Text>
-                        <Text style={styles.summaryFootnote}>{id === 'isv' || id === 'danos' ? 'Pendiente' : 'Ver avisos'}</Text>
+                        <Text style={styles.summaryFootnote}>{id === 'isv' ? 'Pendiente' : 'Ver avisos'}</Text>
                       </Pressable>
                     )) : null}
                     <Pressable
@@ -548,6 +554,7 @@ export function HomeScreen() {
               {!noveltyCategory ? <View style={styles.summaryRow}>
                 {noveltyCategories.map(({ id, label }) => (
                   <Pressable key={id} accessibilityRole="button" onPress={() => setNoveltyCategory(id)} style={styles.summaryCard}>
+                    <View style={styles.summaryIcon}><Text style={styles.summaryIconText}>{noveltyIcons[id]}</Text></View>
                     <Text style={styles.summaryLabel}>{label}</Text>
                     <Text style={styles.summaryValue}>{categoryCount(novedades, id)}</Text>
                   </Pressable>
@@ -577,12 +584,12 @@ export function HomeScreen() {
                     <Text style={styles.retryText}>Reintentar</Text>
                   </Pressable>
                 </View>
-              ) : noveltyCategory === 'isv' || noveltyCategory === 'danos' ? (
+              ) : noveltyCategory === 'isv' ? (
                 <View style={styles.feedbackCard}><Text style={styles.feedbackText}>Consulta pendiente de configuración.</Text></View>
               ) : !noveltyCategory ? (
                 <View style={styles.feedbackCard}><Text style={styles.feedbackText}>Selecciona una categoría para consultar sus novedades.</Text></View>
               ) : novedades?.categorias[noveltyCategory].novedades.length ? (
-                <NovedadesTable key={noveltyCategory} rows={novedades.categorias[noveltyCategory].novedades} isIco={noveltyCategory === 'ico'} />
+                <NovedadesTable key={noveltyCategory} rows={novedades.categorias[noveltyCategory].novedades} category={noveltyCategory} />
               ) : (
                 <View style={styles.feedbackCard}>
                   <Text style={styles.emptyTitle}>Todo al día</Text>
@@ -800,7 +807,7 @@ function DesktopDashboard({
   evidenceCount: number; onTasks: (filter: 'TODAS' | TaskStatus) => void; onNovelties: (category: CategoriaNovedad) => void; onEvidence: () => void; loading: boolean;
 }) {
   const noveltyMetrics = noveltyCategories.map(({ id, label }) => ({
-    label, value: categoryCount(novelties, id), icon: '↗', tone: '#FFF0F0', action: () => onNovelties(id),
+    label, value: categoryCount(novelties, id), icon: noveltyIcons[id], tone: '#FFF0F0', action: () => onNovelties(id),
   }));
   const taskMetrics = [
     { label: 'Tareas pendientes', value: pending, icon: '◷', tone: '#FFF4E5', action: () => onTasks('PENDIENTE') },
@@ -832,11 +839,13 @@ function ProfileRow({ label, value }: { label: string; value: string }) {
 }
 
 function categoryCount(resumen: NovedadesResumen | undefined, category: CategoriaNovedad): number | string {
-  if (category === 'isv' || category === 'danos') return 'Pendiente';
+  if (category === 'isv') return '—';
   return resumen?.categorias[category].total ?? '—';
 }
 
-function NovedadesTable({ rows, isIco }: { rows: Novedad[]; isIco: boolean }) {
+function NovedadesTable({ rows, category }: { rows: Novedad[]; category: CategoriaNovedad }) {
+  const isIco = category === 'ico';
+  const isDamage = category === 'danos';
   const pageSize = 5;
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedNovelty, setSelectedNovelty] = useState<Novedad | null>(null);
@@ -970,6 +979,8 @@ function NovedadesTable({ rows, isIco }: { rows: Novedad[]; isIco: boolean }) {
                     </>
                   ) : null}
                   <NoveltyDetail label="Descripción" value={selectedNovelty.Descripcion} />
+                  {isDamage ? <NoveltyDetail label="Vehículo" value={selectedNovelty.Vehiculo} /> : null}
+                  {isDamage ? <NoveltyDetail label="Ruta" value={selectedNovelty.Ruta} /> : null}
                 </>
               ) : null}
             </ScrollView>
