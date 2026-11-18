@@ -5,6 +5,7 @@ import Constants from 'expo-constants';
 import {
   ActivityIndicator,
   Animated,
+  Alert,
   Image,
   Modal,
   BackHandler,
@@ -39,18 +40,11 @@ import { colors, radius, spacing, typography } from '../theme';
 import { getFirstName } from '../utils/formatName';
 import { getHighestIsvSeverity, getIsvSeverity, type IsvSeverity } from '../utils/isvSeverity';
 import { getResponsiveLayout } from '../constants/responsive';
+import { getVisibleMenuItems, openSchedulePage, type MenuItemValue, type PortalSection } from '../constants/navigationMenu';
 import { ResponsiveShell } from '../components/ResponsiveLayouts';
 import { EvidenceLibrarySection } from '../components/EvidenceLibrarySection';
 import type { TaskStatus } from '../types/tarea';
 
-type PortalSection =
-  | 'inicio'
-  | 'novedades'
-  | 'tareas'
-  | 'tareas-creadas'
-  | 'asignacion-tareas'
-  | 'mis-datos'
-  | 'evidencias';
 type WelcomeNoticeContent = {
   title: string;
   message: string;
@@ -58,31 +52,6 @@ type WelcomeNoticeContent = {
   noveltyCount?: number;
   taskCount?: number;
 };
-
-const menuItems: {
-  label: string;
-  value: PortalSection;
-  description: string;
-  icon?: string;
-}[] = [
-  { label: 'Inicio', value: 'inicio', description: 'Resumen del portal' },
-  { label: 'Novedades', value: 'novedades', description: 'Comunicados y avisos' },
-  { label: 'Evidencias', value: 'evidencias', description: 'Galería de archivos', icon: '▧' },
-  { label: 'Tareas', value: 'tareas', description: 'Actividades asignadas', icon: '☑' },
-  {
-    label: 'Tareas creadas',
-    value: 'tareas-creadas',
-    description: 'Seguimiento a tus asignaciones',
-    icon: '▤',
-  },
-  {
-    label: 'Asignación de tareas',
-    value: 'asignacion-tareas',
-    description: 'Crear actividades para operadores',
-    icon: '＋',
-  },
-  { label: 'Mis datos', value: 'mis-datos', description: 'Perfil del Usuario' },
-];
 
 const sectionTitles: Record<PortalSection, string> = {
   inicio: 'Inicio',
@@ -94,7 +63,7 @@ const sectionTitles: Record<PortalSection, string> = {
   evidencias: 'Evidencias',
 };
 
-const appVersion = Constants.expoConfig?.version ?? '1.2.3';
+const appVersion = Constants.expoConfig?.version ?? '1.2.4';
 const noveltyCategories: { id: CategoriaNovedad; label: string }[] = [
   { id: 'ico', label: 'ICO' },
   { id: 'isv', label: 'ISV' },
@@ -288,19 +257,28 @@ export function HomeScreen() {
     setIsMenuOpen(false);
   };
 
+  const selectMenuItem = (value: MenuItemValue) => {
+    if (value === 'programacion') {
+      setIsMenuOpen(false);
+      void openSchedulePage().catch((error: unknown) => {
+        console.error('No se pudo abrir la programación:', error);
+        const message = 'No fue posible abrir la programación. Inténtalo nuevamente.';
+        if (Platform.OS === 'web') window.alert(message);
+        else Alert.alert('Tu Programación', message);
+      });
+      return;
+    }
+    if (value === 'novedades') setNoveltyCategory(null);
+    selectSection(value);
+  };
+
   const openTasksWithFilter = (filter: 'TODAS' | TaskStatus) => {
     setTaskInitialFilter(filter);
     setActiveSection(canAssignTasks ? 'tareas-creadas' : 'tareas');
     setIsMenuOpen(false);
   };
 
-  const visibleMenuItems = menuItems.filter(
-    (item) =>
-      (item.value !== 'asignacion-tareas' || canAssignTasks) &&
-      (item.value !== 'novedades' || canViewNovelties) &&
-      (item.value !== 'tareas' || !canAssignTasks) &&
-      (item.value !== 'tareas-creadas' || canAssignTasks),
-  );
+  const visibleMenuItems = getVisibleMenuItems(canAssignTasks, canViewNovelties);
   const dashboardTasks = canAssignTasks ? createdTasksQuery.data : tareasQuery.data;
   const activeSectionTitle = activeSection === 'novedades' && noveltyCategory
     ? noveltyCategories.find((item) => item.id === noveltyCategory)?.label ?? 'Novedades'
@@ -314,10 +292,7 @@ export function HomeScreen() {
         desktop={isDesktop}
         items={visibleMenuItems}
         onLogout={handleLogout}
-        onSelect={(section) => {
-          if (section === 'novedades') setNoveltyCategory(null);
-          selectSection(section as PortalSection);
-        }}
+        onSelect={(section) => selectMenuItem(section as MenuItemValue)}
         operatorName={operator?.nombreCompleto ?? 'Operador'}
         tablet={isTablet}
         title={activeSectionTitle}
@@ -711,23 +686,12 @@ export function HomeScreen() {
               </View>
 
               <Text style={styles.menuSectionLabel}>NAVEGACIÓN</Text>
-              {menuItems
-                .filter(
-                  (item) =>
-                    (item.value !== 'asignacion-tareas' || canAssignTasks) &&
-                    (item.value !== 'novedades' || canViewNovelties) &&
-                    (item.value !== 'tareas' || !canAssignTasks) &&
-                    (item.value !== 'tareas-creadas' || canAssignTasks),
-                )
-                .map((item) => (
+              {visibleMenuItems.map((item) => (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ selected: activeSection === item.value }}
                   key={item.value}
-                  onPress={() => {
-                    if (item.value === 'novedades') setNoveltyCategory(null);
-                    selectSection(item.value);
-                  }}
+                  onPress={() => selectMenuItem(item.value)}
                   style={[
                     styles.menuItem,
                     activeSection === item.value && styles.menuItemActive,
