@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 MAX_EVIDENCE_FILES = 14
 MAX_EVIDENCE_IMAGES = 12
 MAX_EVIDENCE_VIDEOS = 2
-MAX_EVIDENCE_SIZE_BYTES = 100 * 1024 * 1024
+MAX_EVIDENCE_SIZE_BYTES = 1536 * 1024 * 1024
 MAX_VIDEO_DURATION_SECONDS = 3 * 60
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 ALLOWED_MEDIA_TYPES = {
@@ -598,7 +598,7 @@ class TareasService:
                 if total_bytes > MAX_EVIDENCE_SIZE_BYTES:
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail="El tamaño total de las evidencias supera 100 MB.",
+                        detail="El tamaño total de las evidencias supera 1536 MB.",
                     )
 
                 watermark_time = captured_at[index]
@@ -1245,7 +1245,7 @@ def _write_upload(upload: UploadFile, destination: Path) -> int:
             if size > MAX_EVIDENCE_SIZE_BYTES:
                 raise HTTPException(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail="Cada evidencia debe pesar máximo 100 MB.",
+                    detail="Cada evidencia debe pesar máximo 1536 MB.",
                 )
             target.write(chunk)
     if size == 0:

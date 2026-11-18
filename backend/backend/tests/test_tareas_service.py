@@ -4,16 +4,17 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from io import BytesIO
+from itertools import chain, repeat
 from pathlib import Path
 from typing import cast
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from fastapi import HTTPException, UploadFile
 from PIL import Image
 from starlette.datastructures import Headers
 from sqlalchemy.orm import Session
 
-from app.services.tareas_service import TareasService
+from app.services.tareas_service import TareasService, _verify_video_duration, _write_upload
 from app.services.evidence_watermark import _capture_label, resolve_ffmpeg_executable, watermark_image
 from app.schemas.tarea import TareaCreateRequest
 
@@ -670,6 +671,76 @@ class TareasServiceTests(unittest.TestCase):
             "Los videos deben durar máximo 3 minutos.",
         )
         self.task_repository.append_evidences.assert_not_called()
+
+    def test_video_duration_accepts_three_minutes_and_rejects_longer(self) -> None:
+        for duration, accepted in [("180.000", True), ("180.001", False)]:
+            with self.subTest(duration=duration):
+                with patch("app.services.tareas_service.subprocess.run", return_value=Mock(stdout=duration)):
+                    if accepted:
+                        self.assertEqual(_verify_video_duration(Path("video.mp4")), 180.0)
+                    else:
+                        with self.assertRaises(HTTPException) as context:
+                            _verify_video_duration(Path("video.mp4"))
+                        self.assertEqual(context.exception.status_code, 422)
+
+    def test_single_file_size_limit_is_1536_mib(self) -> None:
+        chunk = b"x" * (1024 * 1024)
+        for extra, accepted in [(b"", True), (b"x", False)]:
+            with self.subTest(extra=extra):
+                reader = Mock()
+                reader.read.side_effect = chain(repeat(chunk, 1536), [extra, b""])
+                upload = cast(UploadFile, Mock(file=reader))
+                destination = MagicMock(spec=Path)
+                if accepted:
+                    self.assertEqual(_write_upload(upload, destination), 1536 * 1024 * 1024)
+                else:
+                    with self.assertRaises(HTTPException) as context:
+                        _write_upload(upload, destination)
+                    self.assertEqual(context.exception.status_code, 413)
+
+    def test_total_size_limit_applies_across_videos(self) -> None:
+        mib = 1024 * 1024
+        for extra, accepted in [(0, True), (1, False)]:
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as directory:
+                self.task_repository.get_by_id.return_value = _task_record(estado="PENDIENTE")
+                self.task_repository.append_evidences.reset_mock()
+                self.task_repository.append_evidences.return_value = _task_record(estado="EN_PROCESO")
+                uploads = [
+                    UploadFile(
+                        file=BytesIO(b"video"),
+                        filename=f"video{index}.mp4",
+                        headers=Headers({"content-type": "video/mp4"}),
+                    )
+                    for index in range(2)
+                ]
+                with (
+                    patch("app.services.tareas_service.get_settings", return_value=Mock(evidencias_path=directory)),
+                    patch("app.services.tareas_service._write_upload", side_effect=[1024 * mib, 512 * mib + extra]),
+                    patch("app.services.tareas_service._verify_file_signature"),
+                    patch("app.services.tareas_service._verify_video_duration", return_value=180.0),
+                    patch("app.services.tareas_service.watermark_video"),
+                    patch("app.services.tareas_service.get_evidence_cache") as cache,
+                ):
+                    cache.return_value.store_video_thumbnail.return_value = Mock(cache_status="test", size_bytes=0)
+
+                    def upload() -> tuple:
+                        return self.service.upload_evidence(
+                            self.db, tarea_id=1, tipo_documento="CC",
+                            identificacion="1080017116", files=uploads,
+                            captured_at=[datetime(2026, 10, 27)] * 2,
+                            latitude=[4.6] * 2, longitude=[-74.0] * 2,
+                        )
+
+                    if accepted:
+                        _, count = upload()
+                        self.assertEqual(count, 2)
+                        records = self.task_repository.append_evidences.call_args.kwargs["evidencias"]
+                        self.assertEqual([item["duracion_segundos"] for item in records], [180.0, 180.0])
+                    else:
+                        with self.assertRaises(HTTPException) as context:
+                            upload()
+                        self.assertEqual(context.exception.status_code, 413)
+                        self.task_repository.append_evidences.assert_not_called()
 
     def test_operator_can_resolve_own_evidence_file(self) -> None:
         user_repository = Mock()

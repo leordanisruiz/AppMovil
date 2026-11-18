@@ -128,7 +128,7 @@ export const tareasService = {
       formData,
       {
         headers: Platform.OS === 'web' ? undefined : { 'Content-Type': 'multipart/form-data' },
-        timeout: 600_000,
+        timeout: 7_200_000,
       },
     );
     return response.data;

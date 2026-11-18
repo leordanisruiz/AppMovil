@@ -17,9 +17,8 @@ import {
   View,
 } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import * as ImagePicker from 'expo-image-picker';
-import * as Location from 'expo-location';
 import { getApiErrorMessage } from '../services/authService';
+import { captureNativeEvidence } from '../services/nativeEvidenceCapture';
 import { tareasService } from '../services/tareasService';
 import { colors, radius, spacing, typography } from '../theme';
 import type {
@@ -33,6 +32,7 @@ import { AppButton } from './AppButton';
 import { EvidenceGallery } from './EvidenceGallery';
 import { DesktopTasksTable, type TaskStatusFilter } from './DesktopTasksTable';
 import { EvidenceCamera } from './EvidenceCamera';
+import { isWithinEvidenceUploadLimit } from '../utils/evidenceUploadLimits';
 
 type TasksSectionProps = {
   operatorCode: string | null;
@@ -43,7 +43,6 @@ const MAX_PHOTOS_PER_TASK = 12;
 const TASK_PAGE_SIZE = 8;
 const MAX_VIDEOS_PER_TASK = 2;
 const MAX_SELECTED_FILES = MAX_PHOTOS_PER_TASK + MAX_VIDEOS_PER_TASK;
-const MAX_SELECTED_SIZE = 100 * 1024 * 1024;
 const MAX_VIDEO_DURATION_MS = 3 * 60 * 1000;
 const SUPPORTED_EVIDENCE_TYPES = new Set([
   'image/jpeg',
@@ -62,25 +61,26 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   const { operator } = useAuth();
   const canManageEvidence = operator?.rolId === 1 || operator?.rolId === 2;
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [isPreparingVideo, setIsPreparingVideo] = useState(false);
   const [taskPageState, setTaskPageState] = useState({ filterKey: '', page: 1 });
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>(initialStatusFilter);
   const detailBackSwipe = useMemo(
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_event, gesture) =>
-          selectedTaskId !== null &&
+          selectedTaskId !== null && !isPreparingVideo &&
           gesture.x0 <= 64 &&
           gesture.dx >= 36 &&
           Math.abs(gesture.dy) < 55,
         onPanResponderRelease: (_event, gesture) => {
-          if (selectedTaskId === null || gesture.dx < 92) return;
+          if (selectedTaskId === null || isPreparingVideo || gesture.dx < 92) return;
           setSelectedTaskId(null);
           setSelectedAssets([]);
           setActionError(null);
           setActionSuccess(null);
         },
       }),
-    [selectedTaskId],
+    [selectedTaskId, isPreparingVideo],
   );
   const [selectedAssets, setSelectedAssets] = useState<TaskEvidenceAsset[]>([]);
   const selectedAssetsRef = useRef<TaskEvidenceAsset[]>([]);
@@ -227,12 +227,8 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
       );
       return false;
     }
-    const totalSize = [...selectedAssets, ...additions].reduce(
-      (total, asset) => total + (asset.size ?? 0),
-      0,
-    );
-    if (totalSize > MAX_SELECTED_SIZE) {
-      Alert.alert('Archivos muy pesados', 'El tamaño total no puede superar 100 MB.');
+    if (!isWithinEvidenceUploadLimit([...selectedAssets, ...additions])) {
+      Alert.alert('Archivos muy pesados', 'El tamaño total no puede superar 1536 MB por envío.');
       return false;
     }
     setSelectedAssets([...selectedAssets, ...additions]);
@@ -262,50 +258,18 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
     setTimeout(() => void runPendingPickerAction(), 500);
   };
 
-  const captureNativePhoto = async () => {
+  const captureNative = async (mode: 'photo' | 'video') => {
     try {
-      const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!cameraPermission.granted) {
-        setActionError('Debes permitir el acceso a la cámara para tomar evidencias.');
-        return;
-      }
-      const locationPermission = await Location.requestForegroundPermissionsAsync();
-      if (!locationPermission.granted) {
-        setActionError('Debes permitir la ubicación para agregar cada evidencia. Revisa los permisos del dispositivo.');
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images'],
-        quality: 0.9,
-        exif: true,
-      });
-      if (result.canceled) return;
-
-      const picture = result.assets[0];
-      const capturedAt = new Date().toISOString();
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      if (Math.abs(Date.now() - position.timestamp) > 30000) {
-        throw new Error('La ubicación no está actualizada. Activa el GPS e inténtalo nuevamente.');
-      }
-      if (!Number.isFinite(position.coords.latitude) || !Number.isFinite(position.coords.longitude)
-          || Math.abs(position.coords.latitude) > 90 || Math.abs(position.coords.longitude) > 180) {
-        throw new Error('La ubicación obtenida no es válida. Inténtalo nuevamente.');
-      }
-
-      const mimeType = picture.mimeType ?? 'image/jpeg';
-      const extension = mimeType === 'image/heic' || mimeType === 'image/heif' ? 'heic' : 'jpg';
-      addAssets([{
-        uri: picture.uri,
-        name: picture.fileName ?? `foto-${Date.now()}.${extension}`,
-        mimeType,
-        size: picture.fileSize,
-        capturedAt,
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-      }]);
+      const asset = await captureNativeEvidence(
+        mode, MAX_VIDEO_DURATION_MS / 1000, () => setIsPreparingVideo(true),
+      );
+      if (asset) addAssets([asset]);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'No fue posible tomar la foto.');
+      setActionError(error instanceof Error ? error.message : (
+        mode === 'photo' ? 'No fue posible tomar la foto.' : 'No fue posible grabar el video.'
+      ));
+    } finally {
+      if (mode === 'video') setIsPreparingVideo(false);
     }
   };
 
@@ -318,6 +282,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   useEffect(() => {
     if (selectedTaskId === null) return undefined;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isPreparingVideo) return true;
       setSelectedTaskId(null);
       setSelectedAssets([]);
       setActionError(null);
@@ -325,7 +290,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
       return true;
     });
     return () => subscription.remove();
-  }, [selectedTaskId]);
+  }, [selectedTaskId, isPreparingVideo]);
 
   if (!operatorCode) {
     return (
@@ -344,6 +309,8 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
       <View style={styles.section} {...detailBackSwipe.panHandlers}>
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{ disabled: isPreparingVideo }}
+          disabled={isPreparingVideo}
           onPress={() => {
             setSelectedTaskId(null);
             setSelectedAssets([]);
@@ -371,6 +338,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
             task={task}
             operatorCode={operatorCode}
             selectedAssets={selectedAssets}
+            isPreparingVideo={isPreparingVideo}
             isUploading={uploadMutation.isPending}
             isUpdatingStatus={statusMutation.isPending}
             actionError={actionError}
@@ -397,9 +365,11 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
           onDismiss={() => void runPendingPickerAction()}
           onClose={() => setIsSourcePickerVisible(false)}
           onTakePhoto={() => launchPickerAfterDismiss(
-            Platform.OS === 'web' ? async () => setCameraMode('photo') : captureNativePhoto,
+            Platform.OS === 'web' ? async () => setCameraMode('photo') : () => captureNative('photo'),
           )}
-          onRecordVideo={() => launchPickerAfterDismiss(async () => setCameraMode('video'))}
+          onRecordVideo={() => launchPickerAfterDismiss(
+            Platform.OS === 'web' ? async () => setCameraMode('video') : () => captureNative('video'),
+          )}
         />
         {cameraMode && (
           <EvidenceCamera
@@ -561,6 +531,7 @@ function TaskDetail({
   task,
   operatorCode,
   selectedAssets,
+  isPreparingVideo,
   isUploading,
   isUpdatingStatus,
   actionError,
@@ -574,6 +545,7 @@ function TaskDetail({
   task: OperatorTask;
   operatorCode: string;
   selectedAssets: TaskEvidenceAsset[];
+  isPreparingVideo: boolean;
   isUploading: boolean;
   isUpdatingStatus: boolean;
   actionError: string | null;
@@ -637,6 +609,8 @@ function TaskDetail({
           {canAttach ? (
             <Pressable
               accessibilityRole="button"
+              accessibilityState={{ disabled: isPreparingVideo || isUploading }}
+              disabled={isPreparingVideo || isUploading}
               onPress={onAttach}
               style={styles.attachSmallButton}
             >
@@ -644,6 +618,13 @@ function TaskDetail({
             </Pressable>
           ) : null}
         </View>
+
+        {isPreparingVideo ? (
+          <View accessibilityRole="progressbar" accessibilityLabel="Preparando video" style={styles.preparingVideo}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={styles.preparingVideoText}>Preparando video...</Text>
+          </View>
+        ) : null}
 
         <EvidenceGallery emptyMessage="Aún no has enviado evidencias para esta tarea." evidences={task.evidencias} taskId={task.id} />
 
@@ -680,6 +661,7 @@ function TaskDetail({
                   <Pressable
                     accessibilityLabel={`Eliminar ${asset.name}`}
                     accessibilityRole="button"
+                    disabled={isPreparingVideo || isUploading}
                     onPress={() => onRemoveAsset(asset.uri)}
                     style={styles.removeEvidenceButton}
                   >
@@ -692,7 +674,7 @@ function TaskDetail({
               ))}
             </View>
             <AppButton
-              disabled={isUploading}
+              disabled={isUploading || isPreparingVideo}
               loading={isUploading}
               onPress={onUpload}
               title="Subir evidencias"
@@ -714,7 +696,7 @@ function TaskDetail({
 
       {(task.estado === 'EN_PROCESO' || task.estado === 'PENDIENTE') ? (
         <AppButton
-          disabled={isUpdatingStatus}
+          disabled={isUpdatingStatus || isPreparingVideo}
           loading={isUpdatingStatus}
           onPress={onComplete}
           title="Marcar como completada"
@@ -1190,6 +1172,19 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: typography.small,
     marginTop: 2,
+  },
+  preparingVideo: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.medium,
+    flexDirection: 'row',
+    gap: spacing.small,
+    padding: spacing.medium,
+  },
+  preparingVideoText: {
+    color: colors.primary,
+    fontSize: typography.small,
+    fontWeight: '700',
   },
   attachSmallButton: {
     alignItems: 'center',

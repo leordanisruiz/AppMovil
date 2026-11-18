@@ -100,7 +100,7 @@ def watermark_video(
             ],
             check=True,
             capture_output=True,
-            timeout=600,
+            timeout=1800,
         )
 
 

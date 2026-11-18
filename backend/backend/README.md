@@ -260,8 +260,8 @@ Endpoints autenticados:
 - `POST /api/v1/tareas/{id}/evidencias`: recibe archivos multipart en el campo
   `files` y un `captured_at` (ISO 8601), `latitude` y `longitude` por archivo,
   repetidos en el mismo orden. Los tres metadatos son obligatorios. Acepta
-  JPG, PNG, WebP, HEIC, MP4 y MOV; máximo 12 fotos y 2 videos por tarea, con 100 MB
-  combinados por solicitud. Valida extensión, tipo declarado, firma y duración.
+  JPG, PNG, WebP, HEIC, MP4 y MOV; máximo 12 fotos y 2 videos por tarea, con
+  1536 MiB combinados por solicitud. Valida extensión, tipo declarado, firma y duración.
   Cada nueva evidencia guarda `ubicacion` con el formato
   `Longitud -74.15112735809976, latitud 4.557637758636031`; las evidencias
   anteriores sin coordenadas almacenadas devuelven `ubicacion: null`.
@@ -298,10 +298,16 @@ evidencia subida para verla a tamaño completo.
 La cámara y ubicación web requieren HTTPS o localhost; la grabación web requiere
 un navegador que admita MP4 con MediaRecorder. En móvil se requiere una nueva
 compilación con los permisos de cámara, micrófono y ubicación. Los videos no
-pueden superar tres minutos. La cámara integrada muestra el tiempo de grabación
-y permite cambiar entre las cámaras frontal y trasera antes de capturar. En
-móvil también ofrece controles de flash, linterna y zoom según el dispositivo;
-en web, el cambio de cámara depende de la compatibilidad del navegador.
+pueden superar tres minutos. En móvil, tanto la foto como el video abren la
+cámara del sistema, cuyos controles y visualización del tiempo dependen del
+dispositivo. La app solicita un máximo de tres minutos y valida la duración
+devuelta; el servidor también la valida, ya que algunas cámaras Android pueden
+ignorar el límite solicitado. En web, la cámara integrada muestra el tiempo
+de grabación y el cambio de cámara depende de la compatibilidad del navegador.
+Si se usa un proxy o gateway delante de la API, configure su límite de cuerpo
+por encima de 1536 MiB para incluir la sobrecarga multipart y revise sus tiempos
+de espera. Los videos grandes requieren suficiente espacio temporal y tiempo
+de carga y procesamiento; si dos videos superan el límite, súbalos por separado.
 
 Docker corre Linux y no puede usar directamente una ruta UNC de Windows. Monte
 el recurso SMB en el host/container y configure, por ejemplo,
