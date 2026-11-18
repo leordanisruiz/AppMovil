@@ -4,6 +4,7 @@ import { isAxiosError } from 'axios';
 import Constants from 'expo-constants';
 import {
   ActivityIndicator,
+  Animated,
   Image,
   Modal,
   BackHandler,
@@ -36,6 +37,7 @@ import type { CategoriaNovedad, Novedad, NovedadesResumen } from '../types/noved
 import { useAuth } from '../store/AuthProvider';
 import { colors, radius, spacing, typography } from '../theme';
 import { getFirstName } from '../utils/formatName';
+import { getHighestIsvSeverity, getIsvSeverity, type IsvSeverity } from '../utils/isvSeverity';
 import { getResponsiveLayout } from '../constants/responsive';
 import { ResponsiveShell } from '../components/ResponsiveLayouts';
 import { EvidenceLibrarySection } from '../components/EvidenceLibrarySection';
@@ -92,7 +94,7 @@ const sectionTitles: Record<PortalSection, string> = {
   evidencias: 'Evidencias',
 };
 
-const appVersion = Constants.expoConfig?.version ?? '1.2.2';
+const appVersion = Constants.expoConfig?.version ?? '1.2.3';
 const noveltyCategories: { id: CategoriaNovedad; label: string }[] = [
   { id: 'ico', label: 'ICO' },
   { id: 'isv', label: 'ISV' },
@@ -124,6 +126,7 @@ export function HomeScreen() {
     refetch,
     isRefetching,
   } = useNovedades(canViewNovelties ? operatorCode : null);
+  const isvSeverity = getHighestIsvSeverity(novedades?.categorias.isv.novedades ?? []);
   const tareasQuery = useTareas(Boolean(operatorCode));
   const taskCountQuery = useTareasResumen(Boolean(operatorCode));
   const notClosedTaskCount = taskCountQuery.data ?? tareasQuery.data?.filter(
@@ -395,6 +398,11 @@ export function HomeScreen() {
                 {welcomeNotice?.intro ? (
                   <Text style={styles.welcomeNoticeText}>{welcomeNotice.intro}</Text>
                 ) : null}
+                {welcomeNotice?.noveltyCount !== undefined && novedades ? (
+                  <Text style={styles.welcomeNoticeText}>
+                    {noveltyCategories.map(({ id, label }) => `${novedades.categorias[id].total} ${label}`).join('  ·  ')}
+                  </Text>
+                ) : null}
                 {welcomeNotice?.noveltyCount !== undefined ||
                 welcomeNotice?.taskCount !== undefined ? (
                   <View style={styles.welcomeNoticeCounts}>
@@ -497,9 +505,10 @@ export function HomeScreen() {
                         onPress={() => { setNoveltyCategory(id); selectSection('novedades'); }}
                         style={styles.summaryCard}>
                         <View style={styles.summaryIcon}><Text style={styles.summaryIconText}>{noveltyIcons[id]}</Text></View>
+                        {id === 'isv' && isvSeverity ? <IsvAlertBell severity={isvSeverity} /> : null}
                         <Text style={styles.summaryLabel}>{label}</Text>
                         <Text style={styles.summaryValue}>{categoryCount(novedades, id)}</Text>
-                        <Text style={styles.summaryFootnote}>{id === 'isv' ? 'Pendiente' : 'Ver avisos'}</Text>
+                        <Text style={styles.summaryFootnote}>Ver avisos</Text>
                       </Pressable>
                     )) : null}
                     <Pressable
@@ -548,13 +557,13 @@ export function HomeScreen() {
           {activeSection === 'novedades' && canViewNovelties ? (
             <View style={styles.sectionContent}>
               <SectionHeading
-                title={noveltyCategories.find((item) => item.id === noveltyCategory)?.label ?? 'Novedades'}
                 supportingText="Información importante para tu operación."
               />
               {!noveltyCategory ? <View style={styles.summaryRow}>
                 {noveltyCategories.map(({ id, label }) => (
                   <Pressable key={id} accessibilityRole="button" onPress={() => setNoveltyCategory(id)} style={styles.summaryCard}>
                     <View style={styles.summaryIcon}><Text style={styles.summaryIconText}>{noveltyIcons[id]}</Text></View>
+                    {id === 'isv' && isvSeverity ? <IsvAlertBell severity={isvSeverity} /> : null}
                     <Text style={styles.summaryLabel}>{label}</Text>
                     <Text style={styles.summaryValue}>{categoryCount(novedades, id)}</Text>
                   </Pressable>
@@ -584,8 +593,6 @@ export function HomeScreen() {
                     <Text style={styles.retryText}>Reintentar</Text>
                   </Pressable>
                 </View>
-              ) : noveltyCategory === 'isv' ? (
-                <View style={styles.feedbackCard}><Text style={styles.feedbackText}>Consulta pendiente de configuración.</Text></View>
               ) : !noveltyCategory ? (
                 <View style={styles.feedbackCard}><Text style={styles.feedbackText}>Selecciona una categoría para consultar sus novedades.</Text></View>
               ) : novedades?.categorias[noveltyCategory].novedades.length ? (
@@ -808,6 +815,7 @@ function DesktopDashboard({
 }) {
   const noveltyMetrics = noveltyCategories.map(({ id, label }) => ({
     label, value: categoryCount(novelties, id), icon: noveltyIcons[id], tone: '#FFF0F0', action: () => onNovelties(id),
+    alertSeverity: id === 'isv' ? getHighestIsvSeverity(novelties?.categorias.isv.novedades ?? []) : null,
   }));
   const taskMetrics = [
     { label: 'Tareas pendientes', value: pending, icon: '◷', tone: '#FFF4E5', action: () => onTasks('PENDIENTE') },
@@ -821,7 +829,7 @@ function DesktopDashboard({
       <View style={styles.dashboardIntro}><View><Text style={styles.dashboardEyebrow}>PANEL DE CONTROL</Text><Text style={styles.dashboardTitle}>Hola, {firstName}</Text><Text style={styles.dashboardCopy}>Estado actual de tu operación y actividad asignada.</Text></View><View style={styles.dashboardDate}><Text style={styles.dashboardDateLabel}>HOY</Text><Text style={styles.dashboardDateValue}>{new Intl.DateTimeFormat('es-CO', { dateStyle: 'long' }).format(new Date())}</Text></View></View>
       {(showNovelties ? [noveltyMetrics, taskMetrics] : [taskMetrics]).map((metrics) => (
         <View key={metrics === noveltyMetrics ? 'novedades' : 'tareas'} style={styles.metricGrid}>
-          {metrics.map((metric) => <Pressable key={metric.label} accessibilityRole="button" onPress={metric.action} style={styles.metricCard}><View style={[styles.metricIcon, { backgroundColor: metric.tone }]}><Text style={styles.metricIconText}>{metric.icon}</Text></View><Text style={styles.metricLabel}>{metric.label}</Text><Text style={styles.metricValue}>{loading ? '—' : metric.value}</Text><Text style={styles.metricLink}>Ver detalle  ›</Text></Pressable>)}
+          {metrics.map((metric) => <Pressable key={metric.label} accessibilityRole="button" onPress={metric.action} style={styles.metricCard}><View style={[styles.metricIcon, { backgroundColor: metric.tone }]}><Text style={styles.metricIconText}>{metric.icon}</Text></View>{'alertSeverity' in metric && metric.alertSeverity ? <IsvAlertBell severity={metric.alertSeverity} /> : null}<Text style={styles.metricLabel}>{metric.label}</Text><Text style={styles.metricValue}>{loading ? '—' : metric.value}</Text><Text style={styles.metricLink}>Ver detalle  ›</Text></Pressable>)}
         </View>
       ))}
       <View style={styles.dashboardHint}><Text style={styles.dashboardHintIcon}>✦</Text><View style={{ flex: 1 }}><Text style={styles.dashboardHintTitle}>Tu espacio de trabajo</Text><Text style={styles.dashboardHintCopy}>Consulta tareas, novedades y evidencias desde el menú lateral.</Text></View></View>
@@ -839,13 +847,51 @@ function ProfileRow({ label, value }: { label: string; value: string }) {
 }
 
 function categoryCount(resumen: NovedadesResumen | undefined, category: CategoriaNovedad): number | string {
-  if (category === 'isv') return '—';
   return resumen?.categorias[category].total ?? '—';
+}
+
+function IsvAlertBell({ severity }: { severity: IsvSeverity }) {
+  const [scale] = useState(() => new Animated.Value(1));
+
+  useEffect(() => {
+    const animation = Animated.loop(Animated.sequence([
+      Animated.timing(scale, {
+        toValue: severity === 'fatalidad' ? 1.15 : 1.07,
+        duration: severity === 'fatalidad' ? 500 : 800,
+        useNativeDriver: true,
+        isInteraction: false,
+      }),
+      Animated.timing(scale, {
+        toValue: 1,
+        duration: severity === 'fatalidad' ? 500 : 800,
+        useNativeDriver: true,
+        isInteraction: false,
+      }),
+    ]));
+    animation.start();
+    return () => animation.stop();
+  }, [scale, severity]);
+
+  return (
+    <Animated.View
+      accessibilityLabel={`Alerta ISV: ${severity}`}
+      style={[
+        styles.isvBell,
+        severity === 'fatalidad' ? styles.isvBellCritical : styles.isvBellWarning,
+        { transform: [{ scale }] },
+      ]}
+    >
+      <View style={styles.isvBellDome} />
+      <View style={styles.isvBellBase} />
+      <View style={styles.isvBellClapper} />
+    </Animated.View>
+  );
 }
 
 function NovedadesTable({ rows, category }: { rows: Novedad[]; category: CategoriaNovedad }) {
   const isIco = category === 'ico';
   const isDamage = category === 'danos';
+  const isIsv = category === 'isv';
   const pageSize = 5;
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedNovelty, setSelectedNovelty] = useState<Novedad | null>(null);
@@ -865,14 +911,20 @@ function NovedadesTable({ rows, category }: { rows: Novedad[]; category: Categor
         {pageRows.map((novedad, index) => {
           const status = (isIco ? novedad.TipoNovedad : novedad.Estado)?.trim() || 'Sin información';
           const isOpenStatus = /^(ABIERTO|ABIERTA|EN PROCESO|PROCESO)$/i.test(status);
+          const severity = isIsv ? getIsvSeverity(novedad.Subgrupo) : null;
 
           return (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Ver detalle de la novedad ${novedad.IdNovedad}`}
+              accessibilityLabel={`Ver detalle de la novedad ${novedad.IdNovedad}${severity ? `, ${severity}` : ''}`}
               key={novedad.IdNovedad}
               onPress={() => setSelectedNovelty(novedad)}
-              style={[styles.tableRow, index % 2 === 1 && styles.tableRowAlternate]}
+              style={[
+                styles.tableRow,
+                index % 2 === 1 && styles.tableRowAlternate,
+                severity === 'lesionado' && styles.isvRowWarning,
+                severity === 'fatalidad' && styles.isvRowCritical,
+              ]}
             >
               <Text style={[styles.tableCell, styles.idColumn, styles.idCell]}>
                 {novedad.IdNovedad}
@@ -970,6 +1022,7 @@ function NovedadesTable({ rows, category }: { rows: Novedad[]; category: Categor
                 <>
                   <NoveltyDetail label="ID Novedad" value={String(selectedNovelty.IdNovedad)} />
                   <NoveltyDetail label="Fecha Novedad" value={formatNoveltyDate(selectedNovelty.FechaNovedad)} />
+                  {isIsv ? <NoveltyDetail label="Código" value={selectedNovelty.Codigo == null ? null : String(selectedNovelty.Codigo)} /> : null}
                   {!isIco ? <NoveltyDetail label="Estado" value={selectedNovelty.Estado} /> : null}
                   <NoveltyDetail label="Tipo Novedad" value={selectedNovelty.TipoNovedad} />
                   {!isIco ? (
@@ -979,8 +1032,8 @@ function NovedadesTable({ rows, category }: { rows: Novedad[]; category: Categor
                     </>
                   ) : null}
                   <NoveltyDetail label="Descripción" value={selectedNovelty.Descripcion} />
-                  {isDamage ? <NoveltyDetail label="Vehículo" value={selectedNovelty.Vehiculo} /> : null}
-                  {isDamage ? <NoveltyDetail label="Ruta" value={selectedNovelty.Ruta} /> : null}
+                  {isDamage || isIsv ? <NoveltyDetail label="Vehículo" value={selectedNovelty.Vehiculo} /> : null}
+                  {isDamage || isIsv ? <NoveltyDetail label="Ruta" value={selectedNovelty.Ruta} /> : null}
                 </>
               ) : null}
             </ScrollView>
@@ -1323,6 +1376,43 @@ const styles = StyleSheet.create({
     minHeight: 150,
     padding: spacing.medium,
   },
+  isvBell: {
+    alignItems: 'center',
+    borderRadius: 8,
+    height: 28,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 10,
+    top: 10,
+    width: 28,
+  },
+  isvBellWarning: {
+    backgroundColor: '#D97706',
+  },
+  isvBellCritical: {
+    backgroundColor: '#DC2626',
+  },
+  isvBellDome: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 7,
+    borderTopRightRadius: 7,
+    height: 10,
+    width: 10,
+  },
+  isvBellBase: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 2,
+    height: 3,
+    width: 14,
+  },
+  isvBellClapper: {
+    backgroundColor: '#FFFFFF',
+    borderBottomLeftRadius: 3,
+    borderBottomRightRadius: 3,
+    height: 2,
+    marginTop: 1,
+    width: 5,
+  },
   summaryIcon: {
     alignItems: 'center',
     backgroundColor: '#FFF0F0',
@@ -1529,6 +1619,16 @@ const styles = StyleSheet.create({
   },
   tableRowAlternate: {
     backgroundColor: '#FFFAFA',
+  },
+  isvRowWarning: {
+    backgroundColor: '#FFF7E9',
+    borderLeftColor: '#D97706',
+    borderLeftWidth: 4,
+  },
+  isvRowCritical: {
+    backgroundColor: '#FEE2E2',
+    borderLeftColor: '#DC2626',
+    borderLeftWidth: 4,
   },
   tableCell: {
     color: colors.text,

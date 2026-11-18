@@ -11,6 +11,7 @@ import {
   Platform,
   Pressable,
   StyleSheet,
+  ScrollView,
   Text,
   useWindowDimensions,
   View,
@@ -30,7 +31,6 @@ import { useTareas } from '../hooks/useTareas';
 import { useAuth } from '../store/AuthProvider';
 import { AppButton } from './AppButton';
 import { EvidenceGallery } from './EvidenceGallery';
-import { SectionHeading } from './SectionHeading';
 import { DesktopTasksTable, type TaskStatusFilter } from './DesktopTasksTable';
 import { EvidenceCamera } from './EvidenceCamera';
 
@@ -62,7 +62,8 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   const { operator } = useAuth();
   const canManageEvidence = operator?.rolId === 1 || operator?.rolId === 2;
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
-  const [taskPageState, setTaskPageState] = useState({ operatorCode: '', page: 1 });
+  const [taskPageState, setTaskPageState] = useState({ filterKey: '', page: 1 });
+  const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>(initialStatusFilter);
   const detailBackSwipe = useMemo(
     () =>
       PanResponder.create({
@@ -95,11 +96,33 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   const pendingPickerAction = useRef<(() => Promise<void>) | null>(null);
   const pickerInProgress = useRef(false);
   const tasksQuery = useTareas(Boolean(operatorCode));
-  const taskList = tasksQuery.data ?? [];
-  const taskPageCount = Math.max(1, Math.ceil(taskList.length / TASK_PAGE_SIZE));
-  const currentTaskPage = Math.min(taskPageState.operatorCode === (operatorCode ?? '') ? taskPageState.page : 1, taskPageCount);
-  const visibleTasks = taskList.slice((currentTaskPage - 1) * TASK_PAGE_SIZE, currentTaskPage * TASK_PAGE_SIZE);
-  const changeTaskPage = (nextPage: number) => setTaskPageState({ operatorCode: operatorCode ?? '', page: nextPage });
+  const taskList = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data]);
+  const taskFilters: { id: TaskStatusFilter; label: string; color: string; background: string }[] = [
+    { id: 'TODAS', label: 'Todos', color: '#536273', background: '#536273' },
+    { id: 'PENDIENTE', label: 'Pendientes', color: '#B86A00', background: '#C77700' },
+    { id: 'EN_PROCESO', label: 'En Proceso', color: '#1769AA', background: '#1769AA' },
+    { id: 'COMPLETADA', label: 'Completadas', color: '#20845A', background: '#20845A' },
+    { id: 'CERRADO', label: 'Cerradas', color: '#52606D', background: '#52606D' },
+  ];
+  const taskCounts = useMemo(() => taskList.reduce<Record<TaskStatusFilter, number>>((counts, task) => {
+    counts.TODAS += 1;
+    const state = task.estado.trim().toUpperCase();
+    if (state === 'PENDIENTE') counts.PENDIENTE += 1;
+    else if (state === 'EN_PROCESO') counts.EN_PROCESO += 1;
+    else if (state === 'COMPLETADA') counts.COMPLETADA += 1;
+    else if (state === 'CERRADO' || state === 'CERRADA') counts.CERRADO += 1;
+    return counts;
+  }, { TODAS: 0, PENDIENTE: 0, EN_PROCESO: 0, COMPLETADA: 0, CERRADO: 0 }), [taskList]);
+  const filteredTaskList = useMemo(() => statusFilter === 'TODAS'
+    ? taskList
+    : taskList.filter((task) => task.estado.trim().toUpperCase() === statusFilter
+      || (statusFilter === 'CERRADO' && task.estado.trim().toUpperCase() === 'CERRADA')),
+  [statusFilter, taskList]);
+  const taskPageCount = Math.max(1, Math.ceil(filteredTaskList.length / TASK_PAGE_SIZE));
+  const pageFilterKey = `${operatorCode ?? ''}:${statusFilter}`;
+  const currentTaskPage = Math.min(taskPageState.filterKey === pageFilterKey ? taskPageState.page : 1, taskPageCount);
+  const visibleTasks = filteredTaskList.slice((currentTaskPage - 1) * TASK_PAGE_SIZE, currentTaskPage * TASK_PAGE_SIZE);
+  const changeTaskPage = (nextPage: number) => setTaskPageState({ filterKey: pageFilterKey, page: nextPage });
   const detailQuery = useQuery({
     queryKey: ['tarea', selectedTaskId],
     queryFn: () => tareasService.getById(selectedTaskId!),
@@ -418,10 +441,30 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
 
   return (
     <View style={styles.section}>
-      <SectionHeading
-        title="Tareas asignadas"
-        supportingText="Completa tus actividades y adjunta las evidencias solicitadas."
-      />
+      {!desktop ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.taskFilterBar}>
+          {taskFilters.map((filter) => {
+            const selected = statusFilter === filter.id;
+            return (
+              <Pressable
+                key={filter.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                onPress={() => setStatusFilter(filter.id)}
+                style={[
+                  styles.taskFilterChip,
+                  { borderColor: filter.color, backgroundColor: selected ? filter.background : '#FFFFFF' },
+                  selected && styles.taskFilterChipSelected,
+                ]}
+              >
+                <Text style={[styles.taskFilterText, { color: selected ? '#FFFFFF' : filter.color }]}>
+                  {filter.label} ({taskCounts[filter.id]})
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
       {tasksQuery.isLoading ? (
         <ActivityIndicator color={colors.primary} style={styles.loader} />
       ) : tasksQuery.isError ? (
@@ -447,7 +490,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
             }}
           />
         ) : <View style={styles.taskList}>
-          {visibleTasks.map((task) => (
+          {filteredTaskList.length ? visibleTasks.map((task) => (
             <TaskCard
               key={task.id}
               task={task}
@@ -458,8 +501,8 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
                 setSelectedTaskId(task.id);
               }}
             />
-          ))}
-          <View style={styles.taskPagination}><Text style={styles.taskPaginationLabel}>{(currentTaskPage - 1) * TASK_PAGE_SIZE + 1}–{Math.min(currentTaskPage * TASK_PAGE_SIZE, taskList.length)} de {taskList.length}</Text><View style={styles.taskPaginationActions}><Pressable accessibilityRole="button" disabled={currentTaskPage <= 1} onPress={() => changeTaskPage(currentTaskPage - 1)} style={[styles.taskPageButton, currentTaskPage <= 1 && styles.taskPageButtonDisabled]}><Text style={styles.taskPageButtonText}>‹</Text></Pressable><Text style={styles.taskPaginationLabel}>{currentTaskPage} / {taskPageCount}</Text><Pressable accessibilityRole="button" disabled={currentTaskPage >= taskPageCount} onPress={() => changeTaskPage(currentTaskPage + 1)} style={[styles.taskPageButton, currentTaskPage >= taskPageCount && styles.taskPageButtonDisabled]}><Text style={styles.taskPageButtonText}>›</Text></Pressable></View></View>
+          )) : <View style={styles.noticeCard}><Text style={styles.noticeTitle}>No hay tareas en este estado</Text><Text style={styles.bodyText}>Prueba con otro filtro para ver más tareas.</Text></View>}
+          {filteredTaskList.length ? <View style={styles.taskPagination}><Text style={styles.taskPaginationLabel}>{(currentTaskPage - 1) * TASK_PAGE_SIZE + 1}–{Math.min(currentTaskPage * TASK_PAGE_SIZE, filteredTaskList.length)} de {filteredTaskList.length}</Text><View style={styles.taskPaginationActions}><Pressable accessibilityRole="button" disabled={currentTaskPage <= 1} onPress={() => changeTaskPage(currentTaskPage - 1)} style={[styles.taskPageButton, currentTaskPage <= 1 && styles.taskPageButtonDisabled]}><Text style={styles.taskPageButtonText}>‹</Text></Pressable><Text style={styles.taskPaginationLabel}>{currentTaskPage} / {taskPageCount}</Text><Pressable accessibilityRole="button" disabled={currentTaskPage >= taskPageCount} onPress={() => changeTaskPage(currentTaskPage + 1)} style={[styles.taskPageButton, currentTaskPage >= taskPageCount && styles.taskPageButtonDisabled]}><Text style={styles.taskPageButtonText}>›</Text></Pressable></View></View> : null}
         </View>
       ) : (
         <View style={styles.emptyCard}>
@@ -943,6 +986,10 @@ const styles = StyleSheet.create({
   taskList: {
     gap: spacing.medium,
   },
+  taskFilterBar: { alignItems: 'center', flexDirection: 'row', gap: spacing.small, paddingBottom: spacing.xsmall, paddingRight: spacing.medium },
+  taskFilterChip: { alignItems: 'center', borderRadius: radius.pill, borderWidth: 1, justifyContent: 'center', minHeight: 40, paddingHorizontal: spacing.medium },
+  taskFilterChipSelected: { elevation: 2, shadowColor: '#261919', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.16, shadowRadius: 4 },
+  taskFilterText: { fontSize: typography.caption, fontWeight: '800' },
   taskPagination: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.small },
   taskPaginationActions: { alignItems: 'center', flexDirection: 'row', gap: spacing.small },
   taskPaginationLabel: { color: colors.textMuted, fontSize: typography.caption },

@@ -59,6 +59,22 @@ class NovedadesRepositoryTests(unittest.TestCase):
         self.assertIn('fns."Estado" IN (\'PEOCESO\', \'PROCESO\')', sql)
         self.assertEqual(parameters, {"codigo_operador": 807277})
 
+    def test_isv_query_filters_accidents_and_returns_detail_fields(self) -> None:
+        db = Mock()
+        db.execute.return_value.mappings.return_value.all.return_value = []
+        NovedadesRepository().list_by_category(
+            cast(Session, db), codigo_operador=810074, categoria="isv",
+        )
+        statement, parameters = db.execute.call_args.args
+        sql = str(statement)
+        self.assertIn('fns."Estado" IN (\'PEOCESO\', \'PROCESO\')', sql)
+        self.assertIn('UPPER(fns."Novedad") ~ \'(ACCIDENTE)\'', sql)
+        self.assertIn('UPPER(fns."Grupo") !~ \'DA(Ñ|N|Ã)\'', sql)
+        self.assertIn('fns."Vehiculo"::text AS "Vehiculo"', sql)
+        self.assertIn('fns."Ruta"::text AS "Ruta"', sql)
+        self.assertIn('fns."Codigo" = :codigo_operador', sql)
+        self.assertEqual(parameters, {"codigo_operador": 810074})
+
 
 if __name__ == "__main__":
     unittest.main()

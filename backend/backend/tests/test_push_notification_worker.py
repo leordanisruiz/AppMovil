@@ -108,6 +108,28 @@ class PushNotificationWorkerTests(unittest.TestCase):
             "HTTP_429",
         )
 
+    def test_isv_uses_one_category_specific_delivery(self) -> None:
+        token = "ExpoPushToken[device-token_123456789]"
+        encrypted_token = Fernet(self.encryption_key.encode("ascii")).encrypt(
+            token.encode("utf-8")
+        ).decode("ascii")
+        self.repository.try_acquire_poll_lock.return_value = False
+        self.repository.claim_pending.return_value = [{
+            "id": 17, "id_novedad": 123, "token_hash": "a" * 64,
+            "intentos": 1, "token_ciphertext": encrypted_token,
+            "novelty_group": "OPERACION", "is_isv": True,
+        }]
+        self.push_client.send_isv.return_value = "ticket-isv"
+
+        self.worker.run_once()
+
+        self.push_client.send_isv.assert_called_once_with(token, 123)
+        self.push_client.send.assert_not_called()
+        self.push_client.send_operational_damage.assert_not_called()
+        self.assertEqual(
+            self.repository.mark_sent.call_args.kwargs["expo_ticket_id"], "ticket-isv",
+        )
+
     def test_task_assignment_notification_uses_task_payload(self) -> None:
         token = "ExpoPushToken[device-token_123456789]"
         encrypted_token = Fernet(self.encryption_key.encode("ascii")).encrypt(

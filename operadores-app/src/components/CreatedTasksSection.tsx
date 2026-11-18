@@ -213,7 +213,6 @@ export function CreatedTasksSection({ initialStatusFilter = 'TODAS' }: { initial
   return (
     <View style={[styles.section, Platform.OS === 'web' && styles.webSection]}>
       <SectionHeading
-        title="Tareas creadas"
         supportingText="Haz seguimiento a las tareas que asignaste a los operadores."
       />
 

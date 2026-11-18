@@ -52,7 +52,7 @@ export function EvidenceLibrarySection({ operatorCode }: { operatorCode: string 
 
   return (
     <View style={{ gap: 12 }}>
-      <View><Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>Todas las evidencias</Text><Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4 }}>{filtered.length} archivos · Ordenadas por fecha más reciente</Text></View>
+      <Text style={{ color: colors.textMuted, fontSize: 12 }}>{filtered.length} archivos · Ordenadas por fecha más reciente</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         <CalendarDateInput label="Desde" value={fromDate} onChange={setFromDate} />
         <CalendarDateInput label="Hasta" value={toDate} onChange={setToDate} />

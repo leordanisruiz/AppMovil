@@ -13,7 +13,7 @@ class NovedadesRequest(BaseModel):
         max_length=64,
         description="Código del operador autenticado.",
     )
-    categoria: Literal["ico", "inasistencias", "danos", "todas"] = "todas"
+    categoria: Literal["ico", "inasistencias", "danos", "isv", "todas"] = "todas"
 
 
 class Novedad(BaseModel):

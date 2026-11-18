@@ -2,14 +2,14 @@ import { StyleSheet, Text, View } from 'react-native';
 import { colors, spacing, typography } from '../theme';
 
 type SectionHeadingProps = {
-  title: string;
+  title?: string;
   supportingText?: string;
 };
 
 export function SectionHeading({ title, supportingText }: SectionHeadingProps) {
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>{title}</Text>
+      {title ? <Text style={styles.title}>{title}</Text> : null}
       {supportingText ? <Text style={styles.supporting}>{supportingText}</Text> : null}
     </View>
   );

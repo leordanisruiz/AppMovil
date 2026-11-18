@@ -20,5 +20,5 @@ export type CategoriaNovedad = 'ico' | 'inasistencias' | 'isv' | 'danos';
 
 export type NovedadesResumen = {
   total: number;
-  categorias: Record<'ico' | 'inasistencias' | 'danos', NovedadesResponse>;
+  categorias: Record<CategoriaNovedad, NovedadesResponse>;
 };

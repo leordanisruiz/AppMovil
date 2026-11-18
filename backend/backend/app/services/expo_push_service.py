@@ -51,6 +51,18 @@ class ExpoPushClient:
             channel_id=NOVELTY_CHANNEL_ID,
         )
 
+    def send_isv(self, token: str, novelty_id: int) -> str:
+        return self._send_message(
+            token,
+            title="🚨 Nuevo ISV detectado",
+            body=(
+                "Se ha registrado una nueva novedad ISV asociada a un accidente. "
+                "Consulte el detalle para más información."
+            ),
+            data={"tipo": "novedad", "id_novedad": novelty_id, "categoria": "isv"},
+            channel_id=NOVELTY_CHANNEL_ID,
+        )
+
     def send_task_assignment(
         self,
         token: str,

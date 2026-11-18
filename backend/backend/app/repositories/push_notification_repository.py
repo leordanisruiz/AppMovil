@@ -4,6 +4,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.repositories.novedades_repository import ISV_FILTER
+
 _POLL_OPEN_NOVELTIES = text(
     """
     SELECT pg_try_advisory_xact_lock(735190042, 1)
@@ -135,10 +137,11 @@ _IS_INITIALIZED = text(
 )
 
 _CLAIM_OUTBOX = text(
-    """
+    f"""
     WITH candidates AS (
         SELECT
             delivery.id,
+            delivery.id_novedad,
             delivery.task_id,
             delivery.task_event,
             delivery.token_hash
@@ -169,8 +172,8 @@ _CLAIM_OUTBOX = text(
      AND device.activo = TRUE
     LEFT JOIN "DW_OPERACIONAL".tareas_operador AS task
       ON task.id = candidates.task_id
-    LEFT JOIN "DW_SUMA"."FactNovedadesSico" AS novelty
-      ON novelty."Id" = candidates.id_novedad
+    LEFT JOIN "DW_SUMA"."FactNovedadesSico" AS fns
+      ON fns."Id" = candidates.id_novedad
     WHERE delivery.id = candidates.id
       AND delivery.expo_ticket_id IS NULL
     RETURNING
@@ -183,7 +186,8 @@ _CLAIM_OUTBOX = text(
         device.token_ciphertext,
         task.tipo_tarea,
         task.novedades_ids,
-        novelty."Grupo" AS novelty_group
+        fns."Grupo" AS novelty_group,
+        CASE WHEN {ISV_FILTER} THEN TRUE ELSE FALSE END AS is_isv
     """
 )
 

@@ -71,6 +71,16 @@ class ExpoPushServiceTests(unittest.TestCase):
             {"tipo": "tarea", "id_tarea": 55, "id_novedades": [123, 456]},
         )
 
+    def test_sends_isv_message_with_novelty_navigation_data(self) -> None:
+        client = ExpoPushClient()
+        with patch.object(client, "_post", return_value={"data": {"status": "ok", "id": "ticket"}}) as post:
+            self.assertEqual(client.send_isv("ExpoPushToken[device]", 123), "ticket")
+        payload = post.call_args.args[1]
+        self.assertEqual(payload["title"], "🚨 Nuevo ISV detectado")
+        self.assertIn("accidente", payload["body"])
+        self.assertEqual(payload["data"], {"tipo": "novedad", "id_novedad": 123, "categoria": "isv"})
+        self.assertEqual(payload["channelId"], "novedades")
+
     def test_marks_unregistered_token_for_deactivation(self) -> None:
         response = Mock()
         response.__enter__ = Mock(return_value=response)

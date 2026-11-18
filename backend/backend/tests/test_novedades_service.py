@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.services.novedades_service import NovedadesService
+from app.schemas.novedad import NovedadesRequest
 
 
 class NovedadesServiceTests(unittest.TestCase):
@@ -96,6 +97,32 @@ class NovedadesServiceTests(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 403)
         self.novelties_repository.list_by_operator_code.assert_not_called()
+
+    def test_isv_category_preserves_detail_and_checks_operator_identity(self) -> None:
+        request = NovedadesRequest(codigo_operador="810074", categoria="isv")
+        self.operator_repository.get_by_identity.return_value = {"Codigo": "810074"}
+        self.novelties_repository.list_by_category.return_value = [{
+            "IdNovedad": 12, "FechaNovedad": None, "Codigo": 810074,
+            "TipoNovedad": "ACCIDENTE", "Grupo": "OPERACIÓN",
+            "Subgrupo": "Lesionado", "Descripcion": "detalle",
+            "Estado": "PROCESO", "Vehiculo": "123", "Ruta": "45",
+        }]
+        response = self.service.consultar(
+            self.db, codigo_operador=request.codigo_operador, tipo_documento="CC",
+            identificacion="123456", categoria=request.categoria,
+        )
+        self.assertEqual(response.total, 1)
+        self.assertEqual(response.novedades[0].Vehiculo, "123")
+        self.assertEqual(response.novedades[0].Ruta, "45")
+        self.novelties_repository.list_by_category.assert_called_once_with(
+            self.db, codigo_operador=810074, categoria="isv",
+        )
+        with self.assertRaises(HTTPException) as context:
+            self.service.consultar(
+                self.db, codigo_operador="810075", tipo_documento="CC",
+                identificacion="123456", categoria="isv",
+            )
+        self.assertEqual(context.exception.status_code, 403)
 
     def test_rejects_administrative_user_without_operator_code(self) -> None:
         self.operator_repository.get_by_identity.return_value = {

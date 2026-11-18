@@ -3,6 +3,7 @@ from typing import cast
 from unittest.mock import Mock
 
 from app.repositories import push_notification_repository
+from app.repositories.novedades_repository import ISV_FILTER
 from sqlalchemy.orm import Session
 
 
@@ -94,6 +95,10 @@ class PushNotificationRepositoryTests(unittest.TestCase):
         self.assertIn("delivery.lease_until < CURRENT_TIMESTAMP", claim_sql)
         self.assertIn("delivery.expo_ticket_id IS NULL", claim_sql)
         self.assertIn("delivery.intentos + 1", claim_sql)
+        self.assertIn("delivery.id_novedad,", claim_sql)
+        self.assertIn('fns."Id" = candidates.id_novedad', claim_sql)
+        self.assertIn(ISV_FILTER, claim_sql)
+        self.assertIn("AS is_isv", claim_sql)
 
     def test_claims_expo_receipts_and_retries_late_results(self) -> None:
         receipt_sql = str(push_notification_repository._CLAIM_RECEIPTS)

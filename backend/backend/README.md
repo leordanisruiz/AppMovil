@@ -178,13 +178,17 @@ El código debe corresponder al usuario identificado por el token. La respuesta
 incluye las novedades y su cantidad para que el frontend pueda mostrar el
 contador sin recalcularlo:
 
-El campo opcional `categoria` acepta `ico`, `inasistencias` o `todas`
+El campo opcional `categoria` acepta `ico`, `inasistencias`, `danos`, `isv` o `todas`
 (valor predeterminado para mantener compatibilidad). ICO consulta FactICO,
 excluye las áreas de vehículos y el tipo I5025, y no tiene estado.
 Inasistencias consulta FactNovedadesSico con grupo que contiene
-`Inasistencia` y estado `PEOCESO` o `PROCESO`. ISV y daños operativos aún
-no tienen fuente configurada. El total de la aplicación suma solo ICO e
-inasistencias; las demás categorías se muestran como pendientes.
+`Inasistencia` y estado `PEOCESO` o `PROCESO`. Daños operativos consulta
+esa misma tabla con grupo que coincide con `DA(Ñ|N|Ã)` y los mismos estados.
+ISV consulta accidentes cuyo grupo no coincide con ese patrón de daños y
+esté en uno de esos estados. El código de operador se obtiene del perfil
+autenticado, no se limita al código de ejemplo de una consulta. ISV y daños
+incluyen vehículo y ruta. El total suma los conteos de las cuatro categorías;
+si un registro coincide con varias categorías, cuenta en cada una.
 
 ```json
 {
@@ -234,19 +238,19 @@ Endpoints autenticados:
 - `GET /api/v1/tareas/asignacion/novedades/{id}`: busca una novedad abierta y
   devuelve también el operador al que pertenece.
 - `GET /api/v1/tareas/asignacion/operadores/{codigo}/novedades-disponibles`:
-  lista los ICO y las inasistencias del operador con los mismos filtros que
-  la consulta de novedades.
+  lista los ICO, las inasistencias y los daños operativos del operador con
+  los mismos filtros que la consulta de novedades.
 - `GET /api/v1/tareas/asignacion/novedades/buscar/{id}`: devuelve todas las
-  coincidencias de ICO e inasistencias con ese ID y su operador, para poder
+  coincidencias de esas categorías con ese ID y su operador, para poder
   elegir cuando el mismo número exista en varias fuentes.
 - `GET /api/v1/tareas/asignacion/tipos`: lista los tipos activos.
 - `POST /api/v1/tareas/asignacion`: crea la tarea para un operador y una o
   varias novedades. Para identificar la fuente, envíe además de `novedades_ids`
-  `novedades_referencias`, una lista de objetos con `categoria` (`ico` o
-  `inasistencias`) e `id_novedad`. Las referencias se validan contra el
+  `novedades_referencias`, una lista de objetos con `categoria` (`ico`,
+  `inasistencias` o `danos`) e `id_novedad`. Las referencias se validan contra el
   operador y los filtros vigentes. Los IDs antiguos sin categoría siguen
-  utilizando la validación SICO anterior. ISV y daños operativos aún no tienen
-  fuentes configuradas y no se incluyen en la búsqueda.
+  utilizando la validación SICO anterior. ISV no se incluye en la búsqueda
+  ni en la asignación de tareas.
 - `GET /api/v1/tareas`: lista las tareas asignadas al operador autenticado.
 - `GET /api/v1/tareas/resumen/activas`: cuenta las tareas del operador cuyo estado
   no sea `CERRADA` ni `CERRADO`; se usa en el mensaje de bienvenida.
@@ -440,6 +444,12 @@ desactiva tokens cuando Expo responde `DeviceNotRegistered`; consulta los
 receipts a partir de los 15 minutos y deja la entrega como fallida tras 10
 reintentos del receipt.
 
+Las novedades ISV usan el mismo snapshot, outbox y destinatarios que las demás
+novedades de SICO. Se clasifican con el mismo filtro de la consulta ISV y
+envían un mensaje específico; no se realiza un segundo sondeo para ISV.
+El outbox evita más de una entrega encolada por ID y dispositivo, sujeto a la
+ventana de duplicación de Expo descrita abajo.
+
 La tabla SUMA consultada no expone aquí un evento/CDC ni una marca de inserción
 o actualización. El mecanismo escanea las novedades abiertas cada intervalo:
 recupera tras reinicios las que sigan abiertas, pero una novedad que se abra y
@@ -451,7 +461,13 @@ duplicarlo (entrega al menos una vez). Para garantizar cada transición y
 eliminar esa ventana de duplicación se necesitaría un evento/outbox en el
 sistema que escribe SUMA y soporte de idempotencia del proveedor. El escaneo
 periódico completo debe revisarse con DBA contra el volumen e índices de la
-tabla Fact.
+tabla Fact. ISV compara el código numérico directamente, como la consulta
+original, para que PostgreSQL pueda utilizar un índice existente por código.
+Antes de crear índices adicionales, examine `EXPLAIN (ANALYZE, BUFFERS)` con
+datos representativos y los índices existentes, considerando el estado y el
+orden por fecha/ID. La app
+mantiene la caché compartida de React Query y consulta las cuatro categorías
+en paralelo cada 5 segundos; ISV añade una petición por actualización.
 En Android, Expo Go no registra notificaciones push en este cliente; para
 probar avisos con la app en segundo plano se requiere un development build o
 una compilación instalada, además del worker y el token del dispositivo

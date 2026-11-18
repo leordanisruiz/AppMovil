@@ -10,6 +10,9 @@ INASISTENCIAS_FILTER = """fns."Grupo" LIKE '%Inasistencia%'
       AND fns."Estado" IN ('PEOCESO', 'PROCESO')"""
 DANOS_FILTER = """UPPER(fns."Grupo") ~ 'DA(Ñ|N|Ã)'
       AND fns."Estado" IN ('PEOCESO', 'PROCESO')"""
+ISV_FILTER = """fns."Estado" IN ('PEOCESO', 'PROCESO')
+      AND UPPER(fns."Novedad") ~ '(ACCIDENTE)'
+      AND UPPER(fns."Grupo") !~ 'DA(Ñ|N|Ã)'"""
 
 _NOVEDADES_BY_OPERATOR_CODE_QUERY = text(
     """
@@ -59,6 +62,20 @@ _DANOS_BY_OPERATOR_CODE_QUERY = text(
     """
 )
 
+_ISV_BY_OPERATOR_CODE_QUERY = text(
+    f"""
+    SELECT fns."Id" AS "IdNovedad", fns."FechaIngreso" AS "FechaNovedad",
+           fns."Codigo" AS "Codigo", fns."Novedad" AS "TipoNovedad",
+           fns."Grupo" AS "Grupo", fns."Subgrupo" AS "Subgrupo",
+           fns."Detalle" AS "Descripcion", fns."Estado" AS "Estado",
+           fns."Vehiculo"::text AS "Vehiculo", fns."Ruta"::text AS "Ruta"
+    FROM "DW_SUMA"."FactNovedadesSico" AS fns
+    WHERE {ISV_FILTER}
+      AND fns."Codigo" = :codigo_operador
+    ORDER BY fns."FechaIngreso" DESC NULLS LAST, fns."Id" DESC
+    """
+)
+
 _ICO_BY_OPERATOR_CODE_QUERY = text(
     f"""
     SELECT fi."IdIco" AS "IdNovedad", fi."FechaViaje" AS "FechaNovedad",
@@ -83,6 +100,7 @@ class NovedadesRepository:
             "ico": _ICO_BY_OPERATOR_CODE_QUERY,
             "inasistencias": _INASISTENCIAS_BY_OPERATOR_CODE_QUERY,
             "danos": _DANOS_BY_OPERATOR_CODE_QUERY,
+            "isv": _ISV_BY_OPERATOR_CODE_QUERY,
         }[categoria]
         return list(db.execute(query, {"codigo_operador": codigo_operador}).mappings().all())
 

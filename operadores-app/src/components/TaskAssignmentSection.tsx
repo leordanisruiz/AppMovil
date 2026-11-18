@@ -182,7 +182,6 @@ export function TaskAssignmentSection() {
   return (
     <View style={[styles.section, Platform.OS === 'web' && styles.webSection]}>
       <SectionHeading
-        title="Asignación de tareas"
         supportingText="Busca al operador, relaciona las novedades y completa los datos de la actividad."
       />
 
