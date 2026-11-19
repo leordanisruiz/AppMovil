@@ -49,3 +49,20 @@ test('propaga errores de ISV sin presentar un total incompleto', async () => {
   });
   await assert.rejects(service.getAll('810074'), /ISV no disponible/);
 });
+
+test('marca la categoría e ID como vistos y exige confirmación', async () => {
+  let call;
+  const service = createService({
+    post: async (path, body) => {
+      call = { path, category: body.categoria, id: body.id_novedad };
+      return { data: { registrada: true } };
+    },
+  });
+  await service.markViewed('isv', 42);
+  assert.equal(call.path, '/novedades/vistas');
+  assert.equal(call.category, 'isv');
+  assert.equal(call.id, 42);
+
+  const failingService = createService({ post: async () => ({ data: { registrada: false } }) });
+  await assert.rejects(failingService.markViewed('ico', 42), /No se confirmó/);
+});

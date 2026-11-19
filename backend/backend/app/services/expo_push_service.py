@@ -33,34 +33,54 @@ class ExpoReceiptPending(ExpoRetryableError):
 
 
 class ExpoPushClient:
-    def send(self, token: str, novelty_id: int) -> str:
+    def send(self, token: str, novelty_id: int, *, badge: int | None = None) -> str:
         return self._send_message(
             token,
             title="Nueva novedad",
             body="Tienes una nueva novedad abierta.",
             data={"tipo": "novedad", "id_novedad": novelty_id},
             channel_id=NOVELTY_CHANNEL_ID,
+            badge=badge,
         )
 
-    def send_operational_damage(self, token: str, novelty_id: int) -> str:
+    def send_ico(self, token: str, novelty_id: int, *, badge: int | None = None) -> str:
         return self._send_message(
             token,
-            title="Nueva Novedad",
-            body=f"Tiene una novedad Daño Operativo #{novelty_id} por favor revise la información",
+            title="🔴 Nuevo ICO detectado",
+            body="Tiene una nueva novedad ICO pendiente de revisión.",
+            data={"tipo": "novedad", "id_novedad": novelty_id, "categoria": "ico"},
+            channel_id=NOVELTY_CHANNEL_ID,
+            badge=badge,
+        )
+
+    def send_absence(self, token: str, novelty_id: int, *, badge: int | None = None) -> str:
+        return self._send_message(
+            token,
+            title="📅 Nueva Inasistencia",
+            body="Se registró una nueva inasistencia asociada a su operación.",
+            data={"tipo": "novedad", "id_novedad": novelty_id, "categoria": "inasistencias"},
+            channel_id=NOVELTY_CHANNEL_ID,
+            badge=badge,
+        )
+
+    def send_operational_damage(self, token: str, novelty_id: int, *, badge: int | None = None) -> str:
+        return self._send_message(
+            token,
+            title="🚌 Nuevo Daño Operativo",
+            body="Se registró un nuevo daño operativo que requiere revisión.",
             data={"tipo": "novedad", "id_novedad": novelty_id, "categoria": "danos"},
             channel_id=NOVELTY_CHANNEL_ID,
+            badge=badge,
         )
 
-    def send_isv(self, token: str, novelty_id: int) -> str:
+    def send_isv(self, token: str, novelty_id: int, *, badge: int | None = None) -> str:
         return self._send_message(
             token,
-            title="🚨 Nuevo ISV detectado",
-            body=(
-                "Se ha registrado una nueva novedad ISV asociada a un accidente. "
-                "Consulte el detalle para más información."
-            ),
+            title="⚠️ Nuevo ISV detectado",
+            body="Tiene una nueva novedad ISV pendiente de revisión.",
             data={"tipo": "novedad", "id_novedad": novelty_id, "categoria": "isv"},
             channel_id=NOVELTY_CHANNEL_ID,
+            badge=badge,
         )
 
     def send_task_assignment(
@@ -126,10 +146,9 @@ class ExpoPushClient:
         body: str,
         data: dict[str, Any],
         channel_id: str,
+        badge: int | None = None,
     ) -> str:
-        payload = self._post(
-            EXPO_PUSH_URL,
-            {
+        message: dict[str, Any] = {
                 "to": token,
                 "title": title,
                 "body": body,
@@ -137,8 +156,10 @@ class ExpoPushClient:
                 "sound": "default",
                 "priority": "high",
                 "channelId": channel_id,
-            },
-        )
+        }
+        if badge is not None:
+            message["badge"] = badge
+        payload = self._post(EXPO_PUSH_URL, message)
         ticket = payload.get("data")
         if isinstance(ticket, list):
             ticket = ticket[0] if len(ticket) == 1 else None
@@ -193,7 +214,7 @@ class ExpoPushClient:
                 payload = json.loads(response.read())
         except HTTPError as exc:
             exc.close()
-            if exc.code in (408, 429) or exc.code >= 500:
+            if exc.code in (401, 403, 408, 429) or exc.code >= 500:
                 raise ExpoRetryableError(f"HTTP_{exc.code}") from None
             raise ExpoPermanentError(f"HTTP_{exc.code}") from None
         except (URLError, TimeoutError, OSError):
@@ -217,6 +238,8 @@ class ExpoPushClient:
             raise ExpoInvalidPushToken("DEVICE_NOT_REGISTERED")
         if error_code == "MessageRateExceeded":
             raise ExpoRetryableError("MESSAGE_RATE_EXCEEDED")
+        if error_code == "InvalidCredentials":
+            raise ExpoRetryableError("INVALID_CREDENTIALS")
         raise ExpoPermanentError(str(error_code or "EXPO_REJECTED")[:64])
 
 

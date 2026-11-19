@@ -140,6 +140,34 @@ class NovedadesServiceTests(unittest.TestCase):
         self.assertEqual(context.exception.status_code, 403)
         self.novelties_repository.list_by_operator_code.assert_not_called()
 
+    def test_mark_viewed_uses_authenticated_operator_and_rejects_other_records(self) -> None:
+        self.operator_repository.get_by_identity.return_value = {"Codigo": "809772"}
+        self.novelties_repository.mark_viewed.return_value = True
+        self.service.marcar_vista(
+            self.db, tipo_documento="CC", identificacion="123456",
+            categoria="isv", id_novedad=12,
+        )
+        self.novelties_repository.mark_viewed.assert_called_once_with(
+            self.db, codigo_operador=809772, categoria="isv", id_novedad=12,
+        )
+        self.novelties_repository.mark_viewed.return_value = False
+        with self.assertRaises(HTTPException) as context:
+            self.service.marcar_vista(
+                self.db, tipo_documento="CC", identificacion="123456",
+                categoria="isv", id_novedad=13,
+            )
+        self.assertEqual(context.exception.status_code, 404)
+
+    def test_mark_viewed_rejects_user_without_operator_code(self) -> None:
+        self.operator_repository.get_by_identity.return_value = {"Codigo": None}
+        with self.assertRaises(HTTPException) as context:
+            self.service.marcar_vista(
+                self.db, tipo_documento="CC", identificacion="123456",
+                categoria="ico", id_novedad=12,
+            )
+        self.assertEqual(context.exception.status_code, 403)
+        self.novelties_repository.mark_viewed.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

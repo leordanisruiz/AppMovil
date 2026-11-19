@@ -71,15 +71,48 @@ class ExpoPushServiceTests(unittest.TestCase):
             {"tipo": "tarea", "id_tarea": 55, "id_novedades": [123, 456]},
         )
 
+    def test_task_status_payloads_use_task_channel_and_navigation_data(self) -> None:
+        client = ExpoPushClient()
+        for status in ("completada", "cerrada"):
+            with self.subTest(status=status), patch.object(
+                client, "_post", return_value={"data": {"status": "ok", "id": "ticket"}}
+            ) as post:
+                client.send_task_status_change("ExpoPushToken[device]", task_id=55, status=status)
+                payload = post.call_args.args[1]
+                self.assertEqual(payload["channelId"], "tareas")
+                self.assertEqual(payload["data"], {
+                    "tipo": "tarea", "evento": "cambio_estado",
+                    "id_tarea": 55, "estado": status.upper(),
+                })
+                self.assertIn(status, payload["body"])
+
     def test_sends_isv_message_with_novelty_navigation_data(self) -> None:
         client = ExpoPushClient()
         with patch.object(client, "_post", return_value={"data": {"status": "ok", "id": "ticket"}}) as post:
             self.assertEqual(client.send_isv("ExpoPushToken[device]", 123), "ticket")
         payload = post.call_args.args[1]
-        self.assertEqual(payload["title"], "🚨 Nuevo ISV detectado")
-        self.assertIn("accidente", payload["body"])
+        self.assertEqual(payload["title"], "⚠️ Nuevo ISV detectado")
+        self.assertEqual(payload["body"], "Tiene una nueva novedad ISV pendiente de revisión.")
         self.assertEqual(payload["data"], {"tipo": "novedad", "id_novedad": 123, "categoria": "isv"})
         self.assertEqual(payload["channelId"], "novedades")
+
+    def test_category_messages_include_unread_badge(self) -> None:
+        client = ExpoPushClient()
+        cases = (
+            (client.send_ico, "ico", "🔴 Nuevo ICO detectado"),
+            (client.send_isv, "isv", "⚠️ Nuevo ISV detectado"),
+            (client.send_absence, "inasistencias", "📅 Nueva Inasistencia"),
+            (client.send_operational_damage, "danos", "🚌 Nuevo Daño Operativo"),
+        )
+        for send, category, title in cases:
+            with self.subTest(category=category), patch.object(
+                client, "_post", return_value={"data": {"status": "ok", "id": "ticket"}}
+            ) as post:
+                send("ExpoPushToken[device]", 123, badge=4)
+                payload = post.call_args.args[1]
+                self.assertEqual(payload["title"], title)
+                self.assertEqual(payload["data"]["categoria"], category)
+                self.assertEqual(payload["badge"], 4)
 
     def test_marks_unregistered_token_for_deactivation(self) -> None:
         response = Mock()
@@ -125,6 +158,15 @@ class ExpoPushServiceTests(unittest.TestCase):
                 "ExpoPushToken[device-token_123456789]",
                 123,
             )
+
+    def test_invalid_fcm_credentials_remain_retryable(self) -> None:
+        client = ExpoPushClient()
+        with patch.object(
+            client, "_post",
+            return_value={"data": {"status": "error", "details": {"error": "InvalidCredentials"}}},
+        ), self.assertRaises(ExpoRetryableError) as context:
+            client.send_isv("ExpoPushToken[device]", 123)
+        self.assertEqual(context.exception.code, "INVALID_CREDENTIALS")
 
     def test_retrieves_receipt_by_ticket_id(self) -> None:
         response = Mock()

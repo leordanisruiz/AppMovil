@@ -3,6 +3,7 @@ from typing import cast
 from unittest.mock import MagicMock, Mock
 
 from cryptography.fernet import Fernet
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.repositories.push_notification_repository import (
@@ -130,6 +131,30 @@ class PushNotificationWorkerTests(unittest.TestCase):
             self.repository.mark_sent.call_args.kwargs["expo_ticket_id"], "ticket-isv",
         )
 
+    def test_new_categories_use_unread_badge_cached_per_operator(self) -> None:
+        token = "ExpoPushToken[device-token_123456789]"
+        encrypted = Fernet(self.encryption_key.encode("ascii")).encrypt(token.encode()).decode()
+        self.repository.try_acquire_poll_lock.return_value = False
+        self.repository.count_unread.return_value = 4
+        self.repository.claim_pending.return_value = [
+            {
+                "id": index, "id_novedad": index, "token_hash": "a" * 64,
+                "intentos": 1, "token_ciphertext": encrypted,
+                "novelty_category": category, "novelty_operator_code": "101",
+            }
+            for index, category in enumerate(("ico", "isv", "inasistencias", "danos"), 1)
+        ]
+        self.push_client.send_ico.return_value = "ticket"
+        self.push_client.send_isv.return_value = "ticket"
+        self.push_client.send_absence.return_value = "ticket"
+        self.push_client.send_operational_damage.return_value = "ticket"
+        self.worker.run_once()
+        self.push_client.send_ico.assert_called_once_with(token, 1, badge=4)
+        self.push_client.send_isv.assert_called_once_with(token, 2, badge=4)
+        self.push_client.send_absence.assert_called_once_with(token, 3, badge=4)
+        self.push_client.send_operational_damage.assert_called_once_with(token, 4, badge=4)
+        self.repository.count_unread.assert_called_once()
+
     def test_task_assignment_notification_uses_task_payload(self) -> None:
         token = "ExpoPushToken[device-token_123456789]"
         encrypted_token = Fernet(self.encryption_key.encode("ascii")).encrypt(
@@ -159,6 +184,46 @@ class PushNotificationWorkerTests(unittest.TestCase):
             novelty_ids=[123, 456],
         )
         self.repository.mark_sent.assert_called_once()
+
+    def test_task_delivery_continues_when_novelty_poll_fails(self) -> None:
+        token = "ExpoPushToken[device-token_123456789]"
+        encrypted = Fernet(self.encryption_key.encode("ascii")).encrypt(token.encode()).decode()
+        self.repository.try_acquire_poll_lock.return_value = True
+        self.repository.initialize_or_detect.side_effect = SQLAlchemyError("poll failed")
+        self.repository.claim_pending.return_value = [{
+            "id": 20, "id_novedad": None, "task_id": 55, "task_event": "asignacion",
+            "tipo_tarea": "Capacitación", "novedades_ids": [123],
+            "token_hash": "b" * 64, "intentos": 1, "token_ciphertext": encrypted,
+        }]
+        self.push_client.send_task_assignment.return_value = "ticket-task"
+
+        with self.assertLogs("app.services.push_notification_worker", level="ERROR"):
+            self.worker.run_once()
+
+        self.push_client.send_task_assignment.assert_called_once_with(
+            token, task_id=55, task_type="Capacitación", novelty_ids=[123],
+        )
+        self.repository.mark_sent.assert_called_once()
+
+    def test_task_status_events_reach_expo_with_the_expected_status(self) -> None:
+        token = "ExpoPushToken[device-token_123456789]"
+        encrypted = Fernet(self.encryption_key.encode("ascii")).encrypt(token.encode()).decode()
+        self.repository.try_acquire_poll_lock.return_value = False
+        self.repository.claim_pending.return_value = [
+            {
+                "id": index, "id_novedad": None, "task_id": 55, "task_event": event,
+                "token_hash": "b" * 64, "intentos": 1, "token_ciphertext": encrypted,
+            }
+            for index, event in enumerate(("completada", "cerrada"), 1)
+        ]
+        self.push_client.send_task_status_change.return_value = "ticket-task"
+
+        self.worker.run_once()
+
+        self.assertEqual(self.push_client.send_task_status_change.call_count, 2)
+        self.push_client.send_task_status_change.assert_any_call(token, task_id=55, status="completada")
+        self.push_client.send_task_status_change.assert_any_call(token, task_id=55, status="cerrada")
+        self.assertEqual(self.repository.mark_sent.call_count, 2)
 
     def test_device_not_registered_receipt_deactivates_token(self) -> None:
         self.repository.try_acquire_poll_lock.return_value = False

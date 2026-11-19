@@ -20,7 +20,7 @@ class PushNotificationRepositoryTests(unittest.TestCase):
         )
 
         self.assertFalse(discovered_new_items)
-        self.assertEqual(db.execute.call_count, 3)
+        self.assertEqual(db.execute.call_count, 6)
         self.assertIs(
             db.execute.call_args_list[1].args[0],
             push_notification_repository._POLL_INITIAL_SNAPSHOT,
@@ -28,6 +28,10 @@ class PushNotificationRepositoryTests(unittest.TestCase):
         self.assertIs(
             db.execute.call_args_list[2].args[0],
             push_notification_repository._MARK_INITIAL_SNAPSHOT_COMPLETE,
+        )
+        self.assertIs(
+            db.execute.call_args_list[4].args[0],
+            push_notification_repository._SNAPSHOT_CATEGORIES,
         )
 
     def test_later_poll_persists_new_rows_and_deduplicates_outbox(self) -> None:
@@ -42,13 +46,13 @@ class PushNotificationRepositoryTests(unittest.TestCase):
         )
 
         self.assertTrue(discovered_new_items)
-        self.assertEqual(db.execute.call_count, 3)
+        self.assertEqual(db.execute.call_count, 4)
         self.assertIs(
-            db.execute.call_args_list[1].args[0],
+            db.execute.call_args_list[2].args[0],
             push_notification_repository._POLL_NEW_NOVELTIES,
         )
         self.assertIn(
-            "ON CONFLICT (id_novedad, token_hash)",
+            "ON CONFLICT (novelty_event_id, token_hash)",
             str(push_notification_repository._POLL_NEW_NOVELTIES),
         )
 
@@ -70,24 +74,21 @@ class PushNotificationRepositoryTests(unittest.TestCase):
     def test_new_open_rows_create_unique_persisted_outbox_deliveries(self) -> None:
         discovery_sql = str(push_notification_repository._POLL_NEW_NOVELTIES)
         self.assertIn('"DW_SUMA"."FactNovedadesSico"', discovery_sql)
+        self.assertIn('"DW_SUMA"."FactICO"', discovery_sql)
         self.assertIn('"DW_SUMA"."DimEmpleados"', discovery_sql)
         self.assertRegex(
             discovery_sql,
             r'BTRIM\(employee\."Codigo"::text\)\s*=\s*'
             r'BTRIM\(eligible_novelties\.codigo_operador::text\)',
         )
-        self.assertRegex(
-            discovery_sql,
-            r'BTRIM\(fns\."Codigo"::text\)\s*=\s*'
-            r'BTRIM\(eligible_novelties\.codigo_operador::text\)',
-        )
+        self.assertIn("current_novelty.codigo_operador = eligible_novelties.codigo_operador", discovery_sql)
         self.assertIn('UPPER(BTRIM(employee."IndicadorActividad")) = \'A\'', discovery_sql)
         self.assertIn("device.activo = TRUE", discovery_sql)
         self.assertIn(
-            "ON CONFLICT (id_novedad, token_hash)",
+            "ON CONFLICT (novelty_event_id, token_hash)",
             discovery_sql,
         )
-        self.assertIn("WHERE id_novedad IS NOT NULL", discovery_sql)
+        self.assertIn("WHERE novelty_event_id IS NOT NULL", discovery_sql)
 
     def test_claims_outbox_rows_without_locking_other_workers(self) -> None:
         claim_sql = str(push_notification_repository._CLAIM_OUTBOX)

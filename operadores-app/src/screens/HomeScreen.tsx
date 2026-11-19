@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { isAxiosError } from 'axios';
 import Constants from 'expo-constants';
@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Animated,
   Alert,
+  AppState,
   Image,
   Modal,
   BackHandler,
@@ -32,8 +33,10 @@ import { useTareasCreadas } from '../hooks/useTareasCreadas';
 import {
   subscribeToNoveltyNavigation,
   syncAppBadge,
+  type TaskNotificationDestination,
 } from '../services/notificationService';
 import { registerDeviceForPushNotifications } from '../services/pushTokenService';
+import { novedadesService } from '../services/novedadesService';
 import type { CategoriaNovedad, Novedad, NovedadesResumen } from '../types/novedad';
 import { useAuth } from '../store/AuthProvider';
 import { colors, radius, spacing, typography } from '../theme';
@@ -63,7 +66,7 @@ const sectionTitles: Record<PortalSection, string> = {
   evidencias: 'Evidencias',
 };
 
-const appVersion = Constants.expoConfig?.version ?? '1.2.4';
+const appVersion = Constants.expoConfig?.version ?? '1.2.5';
 const noveltyCategories: { id: CategoriaNovedad; label: string }[] = [
   { id: 'ico', label: 'ICO' },
   { id: 'isv', label: 'ISV' },
@@ -108,6 +111,8 @@ export function HomeScreen() {
   const [isWelcomeNoticeDismissed, setIsWelcomeNoticeDismissed] = useState(false);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [pushError, setPushError] = useState<string | null>(null);
+  const registeringPush = useRef(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<PortalSection>('inicio');
   const [noveltyCategory, setNoveltyCategory] = useState<CategoriaNovedad | null>(null);
@@ -172,30 +177,52 @@ export function HomeScreen() {
     return () => subscription.remove();
   }, [activeSection, isMenuOpen]);
 
-  useEffect(() => {
-    if (!canRegisterPush) return undefined;
-
-    void registerDeviceForPushNotifications()
-      .catch((error: unknown) => {
-        if (isAxiosError(error) && error.response?.status === 401) return;
-
-        console.error('No se pudo registrar el dispositivo para push:', error);
-        // Push registration is optional; keep technical failures out of task UI.
-      });
-    return undefined;
+  const registerPush = useCallback(async () => {
+    if (!canRegisterPush || Platform.OS === 'web' || registeringPush.current) return;
+    registeringPush.current = true;
+    try {
+      await registerDeviceForPushNotifications();
+      setPushError(null);
+    } catch (error: unknown) {
+      if (isAxiosError(error) && error.response?.status === 401) return;
+      console.error(
+        'No se pudo registrar el dispositivo para push:',
+        isAxiosError(error) ? `HTTP ${error.response?.status ?? 'sin respuesta'}` : 'error del dispositivo',
+      );
+      setPushError(
+        !isAxiosError(error) && error instanceof Error
+          ? error.message
+          : 'No se pudieron activar las notificaciones. Comprueba tu conexión e inténtalo de nuevo.',
+      );
+    } finally {
+      registeringPush.current = false;
+    }
   }, [canRegisterPush]);
 
+  useEffect(() => {
+    if (!canRegisterPush) return undefined;
+    const frame = requestAnimationFrame(() => void registerPush());
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void registerPush();
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      subscription.remove();
+    };
+  }, [canRegisterPush, registerPush]);
+
 
   useEffect(() => {
-    if (!operatorCode) return;
-
-    const pendingCount =
-      pendingTaskCount + (novedades?.total ?? 0);
+    if (!canViewNovelties || !novedades) return;
+    const pendingCount = noveltyCategories.reduce(
+      (total, { id }) => total + novedades.categorias[id].novedades.filter((item) => !item.Vista).length,
+      0,
+    );
 
     void syncAppBadge(pendingCount).catch((error: unknown) => {
       console.error('No se pudo actualizar el contador del icono:', error);
     });
-  }, [novedades?.total, operatorCode, pendingTaskCount]);
+  }, [canViewNovelties, novedades]);
 
 
   useEffect(() => {
@@ -214,8 +241,8 @@ export function HomeScreen() {
       void queryClient.invalidateQueries({ queryKey: ['tareas'] });
       void queryClient.invalidateQueries({ queryKey: ['tareas-creadas'] });
     };
-    const openTasks = () => {
-      setActiveSection('tareas');
+    const openTasks = (destination: TaskNotificationDestination) => {
+      setActiveSection(destination === 'creadas' ? 'tareas-creadas' : 'tareas');
       setIsMenuOpen(false);
     };
     return subscribeToNoveltyNavigation(
@@ -344,6 +371,15 @@ export function HomeScreen() {
             <Text style={styles.pageEyebrow}>PORTAL DEL OPERADOR</Text>
             <Text style={styles.pageTitle}>{activeSectionTitle}</Text>
           </View>
+
+          {pushError ? (
+            <View style={styles.feedbackCard}>
+              <Text style={styles.feedbackText}>{pushError}</Text>
+              <Pressable accessibilityRole="button" onPress={() => void registerPush()}>
+                <Text style={styles.noveltyModalCloseText}>Reintentar notificaciones</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           <Modal
             animationType="fade"
@@ -570,8 +606,8 @@ export function HomeScreen() {
                 </View>
               ) : !noveltyCategory ? (
                 <View style={styles.feedbackCard}><Text style={styles.feedbackText}>Selecciona una categoría para consultar sus novedades.</Text></View>
-              ) : novedades?.categorias[noveltyCategory].novedades.length ? (
-                <NovedadesTable key={noveltyCategory} rows={novedades.categorias[noveltyCategory].novedades} category={noveltyCategory} />
+              ) : operatorCode && novedades?.categorias[noveltyCategory].novedades.length ? (
+                <NovedadesTable key={noveltyCategory} rows={novedades.categorias[noveltyCategory].novedades} category={noveltyCategory} operatorCode={operatorCode} />
               ) : (
                 <View style={styles.feedbackCard}>
                   <Text style={styles.emptyTitle}>Todo al día</Text>
@@ -852,13 +888,24 @@ function IsvAlertBell({ severity }: { severity: IsvSeverity }) {
   );
 }
 
-function NovedadesTable({ rows, category }: { rows: Novedad[]; category: CategoriaNovedad }) {
+function NovedadesTable({ rows, category, operatorCode }: { rows: Novedad[]; category: CategoriaNovedad; operatorCode: string }) {
   const isIco = category === 'ico';
   const isDamage = category === 'danos';
   const isIsv = category === 'isv';
   const pageSize = 5;
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedNovelty, setSelectedNovelty] = useState<Novedad | null>(null);
+  const [readError, setReadError] = useState(false);
+  const markViewed = async (novelty: Novedad) => {
+    setReadError(false);
+    try {
+      await novedadesService.markViewed(category, novelty.IdNovedad);
+      await queryClient.invalidateQueries({ queryKey: ['novedades', operatorCode] });
+    } catch (error: unknown) {
+      console.error('No se pudo registrar la lectura de la novedad:', error);
+      setReadError(true);
+    }
+  };
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const page = Math.min(currentPage, pageCount);
   const startIndex = (page - 1) * pageSize;
@@ -882,7 +929,11 @@ function NovedadesTable({ rows, category }: { rows: Novedad[]; category: Categor
               accessibilityRole="button"
               accessibilityLabel={`Ver detalle de la novedad ${novedad.IdNovedad}${severity ? `, ${severity}` : ''}`}
               key={novedad.IdNovedad}
-              onPress={() => setSelectedNovelty(novedad)}
+              onPress={() => {
+                setSelectedNovelty(novedad);
+                setReadError(false);
+                if (!novedad.Vista) void markViewed(novedad);
+              }}
               style={[
                 styles.tableRow,
                 index % 2 === 1 && styles.tableRowAlternate,
@@ -981,6 +1032,11 @@ function NovedadesTable({ rows, category }: { rows: Novedad[]; category: Categor
           <View style={styles.noveltyModalCard}>
             <View style={styles.noveltyModalHandle} />
             <Text style={styles.noveltyModalTitle}>Detalle de novedad</Text>
+            {readError && selectedNovelty ? (
+              <Pressable accessibilityRole="button" onPress={() => void markViewed(selectedNovelty)}>
+                <Text style={styles.feedbackText}>No se pudo marcar como vista. Toca aquí para reintentar.</Text>
+              </Pressable>
+            ) : null}
             <ScrollView contentContainerStyle={styles.noveltyModalContent}>
               {selectedNovelty ? (
                 <>

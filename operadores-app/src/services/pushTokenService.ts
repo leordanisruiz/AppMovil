@@ -15,7 +15,9 @@ export async function registerDeviceForPushNotifications(): Promise<boolean> {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
     return false;
   }
-  if (!areNativeNotificationsAvailable()) return false;
+  if (!areNativeNotificationsAvailable()) {
+    throw new Error('Las notificaciones remotas requieren la aplicación instalada, no Expo Go.');
+  }
 
   const permissionGranted = await requestNotificationPermission();
   if (!permissionGranted) {
@@ -25,8 +27,10 @@ export async function registerDeviceForPushNotifications(): Promise<boolean> {
   }
 
   const pushToken = await getExpoPushToken();
-  if (!pushToken) return false;
-  await tokenStorage.savePushToken(pushToken);
+  if (!pushToken) {
+    throw new Error('No se pudo obtener el token de notificaciones del dispositivo.');
+  }
+  const previousToken = await tokenStorage.getPushToken();
 
   const response = await httpClient.post<RegisterPushTokenResponse>(
     '/novedades/push-tokens',
@@ -40,6 +44,12 @@ export async function registerDeviceForPushNotifications(): Promise<boolean> {
     throw new Error('El backend no confirmó el registro del dispositivo.');
   }
 
+  if (previousToken && previousToken !== pushToken) {
+    await httpClient.delete('/novedades/push-tokens', {
+      data: { expo_push_token: previousToken },
+    });
+  }
+  await tokenStorage.savePushToken(pushToken);
   return true;
 }
 

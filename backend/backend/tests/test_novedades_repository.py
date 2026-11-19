@@ -72,7 +72,7 @@ class NovedadesRepositoryTests(unittest.TestCase):
         self.assertIn('UPPER(fns."Grupo") !~ \'DA(Ñ|N|Ã)\'', sql)
         self.assertIn('fns."Vehiculo"::text AS "Vehiculo"', sql)
         self.assertIn('fns."Ruta"::text AS "Ruta"', sql)
-        self.assertIn('fns."Codigo" = :codigo_operador', sql)
+        self.assertIn('fns."Codigo" = CAST(:codigo_operador AS bigint)', sql)
         self.assertEqual(parameters, {"codigo_operador": 810074})
 
 

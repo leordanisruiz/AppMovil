@@ -119,7 +119,9 @@ de que Operaciones validará la evidencia antes de cerrar la novedad en SICO.
    `sql/005_task_assignment_roles.sql`, `sql/006_add_closed_task_state.sql` y
    `sql/007_task_status_push_events.sql` para notificar cambios de estado.
    Aplicar `sql/008_backfill_usuario_roles.sql` para completar roles de
-   usuarios ya registrados.
+   usuarios ya registrados, `sql/009_task_novelty_references.sql` y finalmente
+   `sql/010_push_novedades_y_vistas.sql` para el sondeo por categoría y las
+   lecturas.
    Ejecutar los scripts con el
    proceso de despliegue/DBA; la API no aplica DDL al iniciar.
 5. Configurar `DATABASE_URL` para la instancia PostgreSQL que contiene
@@ -127,9 +129,11 @@ de que Operaciones validará la evidencia antes de cerrar la novedad en SICO.
    `"DW_CONFIG".usuarios_app` y las tablas Expo. La cuenta runtime debe tener
    `USAGE` en los esquemas `"DW_SUMA"` y `"DW_CONFIG"`, `SELECT` en las tablas
    SUMA, `SELECT`/`INSERT` en `"DW_CONFIG".usuarios_app` y
-   `SELECT`/`INSERT`/`UPDATE` en las tablas `expo_push_*`; también
-   requiere `USAGE`/`SELECT` en la secuencia
-   `"DW_CONFIG".expo_push_outbox_id_seq`. La creación inicial requiere permisos
+   `SELECT`/`INSERT`/`UPDATE` en las tablas `expo_push_*` y
+   `SELECT`/`INSERT`/`UPDATE`/`DELETE` en `"DW_CONFIG".novedades_vistas`; también
+   requiere `USAGE`/`SELECT` en las secuencias
+   `"DW_CONFIG".expo_push_outbox_id_seq` y
+   `"DW_CONFIG".expo_push_novelty_events_id_seq`. La creación inicial requiere permisos
    DDL para DBA. Codifique los caracteres reservados de la URL.
 6. Configurar `JWT_SECRET_KEY` con al menos 32 bytes aleatorios; por ejemplo:
    `python -c "import secrets; print(secrets.token_urlsafe(64))"`.
@@ -189,6 +193,12 @@ esté en uno de esos estados. El código de operador se obtiene del perfil
 autenticado, no se limita al código de ejemplo de una consulta. ISV y daños
 incluyen vehículo y ruta. El total suma los conteos de las cuatro categorías;
 si un registro coincide con varias categorías, cuenta en cada una.
+Las consultas por categoría incluyen `Vista`: al abrir un detalle la app llama
+a `POST /api/v1/novedades/vistas` con `categoria` e `id_novedad`. El servidor
+obtiene el operador del JWT y solo marca registros pertenecientes a él. El
+contador del icono suma únicamente las novedades no vistas de esas cuatro
+categorías, no las tareas. Las vistas son compartidas por los dispositivos del
+operador; una reasignación detectada restablece la vista del nuevo destinatario.
 
 ```json
 {
@@ -367,12 +377,22 @@ La pantalla **Asignación de tareas** está disponible para cuentas con `rol_id`
 1 o 2. Permite buscar operadores por código/identificación o una novedad por
 ID, asociar una o varias novedades abiertas, elegir el tipo de tarea y crearla
 en estado `PENDIENTE`. Si el operador tiene tokens Expo activos, el envío se
-encola en `expo_push_outbox`; el proceso worker del perfil `push` debe estar
-ejecutándose para entregarlo. Los datos de la notificación abren la sección
-Tareas de la app.
+encola en `expo_push_outbox`; el proceso `push-worker` debe estar ejecutándose
+para entregarlo. Los datos de la notificación abren la sección Tareas de la
+app.
 Cuando el operador completa una tarea, el aviso se envía al usuario creador
 con rol `1` o `2` y solicita revisar las evidencias y cerrar en SICO las
-novedades relacionadas. Al cerrar la tarea, el aviso se envía al operador.
+novedades relacionadas; al tocarlo, abre Tareas creadas. Al cerrar la tarea,
+el aviso se envía al operador y abre Tareas.
+
+La creación y el cierre encolan una entrega por token activo y evento en la
+misma transacción que el cambio de tarea. Si no hay tokens activos, no se crea
+una entrega para ese evento ni se recupera automáticamente al registrar el
+dispositivo después: la asignación lo advierte en pantalla y el cierre deja una
+advertencia en el log. La restricción por tarea, dispositivo y evento evita
+duplicados en la cola, sujeta a la limitación de entrega de Expo indicada abajo.
+Si falla el sondeo de novedades, el worker registra el error y sigue intentando
+procesar las entregas de tareas ya encoladas.
 
 ### Registro de dispositivos y notificaciones Expo
 
@@ -434,7 +454,7 @@ Configure en API y worker:
   predeterminado `100`.
 
 En Docker Compose, iniciar el proceso durable independiente de la API con
-`docker compose --profile push up --build`. Para otros despliegues, ejecutar
+`docker compose up -d --build api push-worker`. Para otros despliegues, ejecutar
 `python -m app.worker` como proceso worker supervisado. Puede haber varias
 instancias: un advisory lock transaccional de PostgreSQL serializa la detección
 y `FOR UPDATE SKIP LOCKED` más leases reclaman el outbox entre workers. El
@@ -443,18 +463,22 @@ persistidos en `"DW_CONFIG"`; no se usa `BackgroundTasks` ni una tarea dentro
 de cada proceso API.
 
 El primer sondeo crea un snapshot de las novedades que ya estaban abiertas y
-las marca históricas sin enviar push. Los sondeos posteriores detectan nuevas
-filas abiertas, crean una entrega por novedad/dispositivo y reintentan fallos
-transitorios con espera exponencial. El worker consulta los receipts de Expo y
+las marca históricas sin enviar push. Al actualizar una instalación existente,
+la primera inicialización de categorías conserva el histórico SICO y toma un
+snapshot de los ICO existentes. Los sondeos posteriores detectan filas nuevas,
+cambios de operador o categoría, crean un evento por fuente/ID/revisión y una
+entrega por evento/dispositivo y reintentan fallos transitorios con espera
+exponencial. Los IDs de ICO y SICO se distinguen incluso si coinciden. El
+worker consulta los receipts de Expo y
 desactiva tokens cuando Expo responde `DeviceNotRegistered`; consulta los
 receipts a partir de los 15 minutos y deja la entrega como fallida tras 10
 reintentos del receipt.
 
-Las novedades ISV usan el mismo snapshot, outbox y destinatarios que las demás
-novedades de SICO. Se clasifican con el mismo filtro de la consulta ISV y
-envían un mensaje específico; no se realiza un segundo sondeo para ISV.
-El outbox evita más de una entrega encolada por ID y dispositivo, sujeto a la
-ventana de duplicación de Expo descrita abajo.
+El worker clasifica ICO, ISV, Inasistencias y Daños operativos con los filtros
+de sus consultas. Si una fila SICO coincide con varias categorías, genera un
+solo push con prioridad ISV, daños e inasistencias. Una restricción única evita
+encolar dos veces el mismo evento y dispositivo, sujeto a la ventana de
+duplicación de Expo descrita abajo.
 
 La tabla SUMA consultada no expone aquí un evento/CDC ni una marca de inserción
 o actualización. El mecanismo escanea las novedades abiertas cada intervalo:
@@ -474,10 +498,90 @@ datos representativos y los índices existentes, considerando el estado y el
 orden por fecha/ID. La app
 mantiene la caché compartida de React Query y consulta las cuatro categorías
 en paralelo cada 5 segundos; ISV añade una petición por actualización.
+El estado de detección supone una sola combinación de operador y categoría por
+fuente/ID en cada sondeo. Antes del despliegue el DBA debe comprobar ese
+invariante: si un mismo ID tiene combinaciones distintas simultáneamente, el
+`UPSERT` puede fallar y detener el sondeo. En la base local inspeccionada,
+FactICO es una vista y los índices de FactNovedadesSico no son únicos, por lo
+que los índices no garantizan ese invariante. Examine también el plan y los
+índices de las tablas subyacentes a la vista; no cree índices a ciegas.
 En Android, Expo Go no registra notificaciones push en este cliente; para
 probar avisos con la app en segundo plano se requiere un development build o
 una compilación instalada, además del worker y el token del dispositivo
 registrados correctamente.
+
+#### Despliegue y diagnóstico
+
+1. Verifique copia de seguridad y pare el worker antiguo antes de aplicar la
+   migración 010; cambia el índice de deduplicación y el worker anterior no es
+   compatible con ese índice. Aplique las migraciones en orden con el DBA,
+   despliegue la nueva API y el nuevo worker y reinícielos coordinadamente.
+   No se limpian tokens, histórico ni outbox. Mantenga la misma clave Fernet.
+2. En el Compose de la raíz, las variables en `environment` se interpolan desde
+   el entorno/archivo de interpolación, no desde `env_file`; valores vacíos
+   pueden sobrescribir `backend/.env`. Use por ejemplo
+   `docker compose --env-file backend/.env up -d --build api push-worker` desde
+   la raíz. Compruebe `docker compose ps` y los logs de ambos procesos sin
+   compartir credenciales ni la salida completa de configuración.
+3. En EAS confirme las credenciales FCM HTTP v1 del mismo proyecto y paquete
+   Android usados en el build instalado. Confirme además permisos del sistema,
+   canales habilitados, conexión y que la app registre el token tras iniciar
+   sesión. La app muestra un aviso y permite reintentar si el registro falla;
+   vuelve a intentarlo al regresar a primer plano.
+   Para iPhone se necesita una cuenta Apple Developer, un identificador de
+   aplicación iOS registrado y la clave APNs configurada en EAS. El `app.json`
+   de este proyecto todavía no define `ios.bundleIdentifier`: confirme el
+   identificador existente antes de configurarlo, sin asumir que coincida con
+   Android. Compruebe en el build firmado el entitlement `aps-environment`
+   correspondiente al perfil de distribución y solicite permiso de avisos.
+   Configure una URL HTTPS accesible desde el dispositivo al compilar.
+4. Consulte la **misma base de datos configurada en producción**, en modo de
+   lectura, sin extraer tokens ni códigos de acceso:
+
+   ```sql
+   SELECT plataforma, activo, count(*) FROM "DW_CONFIG".expo_push_tokens
+   GROUP BY plataforma, activo;
+   SELECT estado, ultimo_error, count(*) FROM "DW_CONFIG".expo_push_outbox
+   GROUP BY estado, ultimo_error ORDER BY estado, ultimo_error;
+   SELECT inicializado, categorias_inicializadas, ultimo_sondeo
+   FROM "DW_CONFIG".expo_push_poll_state WHERE id = 1;
+   ```
+
+   Sin tokens activos no habrá destinatarios. `recibo_pendiente` espera la
+   confirmación de Expo; los errores de credenciales deben corregirse en Expo,
+   no limpiando tablas. `DeviceNotRegistered` desactiva el token y requiere
+   volver a registrar el dispositivo. No borre el histórico ni reinicie el
+   snapshot: podría suprimir avisos nuevos o provocar una avalancha. Analice
+   cualquier reproceso individual con el DBA después de identificar el error.
+
+#### Validación en Android
+
+- Instale un build compatible, permita notificaciones y badges en el sistema
+  y en el launcher, inicie sesión y compruebe el registro activo y el sondeo.
+- Para ICO, ISV, Inasistencia y Daño operativo, cree o asigne un registro al
+  operador, confirme un evento y una entrega, ticket aceptado y receipt. Repita
+  los sondeos y compruebe que no aparece otra entrega del mismo evento/token.
+- Repita con la app abierta, minimizada y cerrada por el usuario. Revise permisos,
+  canal, restricciones de batería, conectividad y logs si el receipt es correcto
+  pero no aparece el aviso; la aceptación de Expo no garantiza la visualización.
+- Con varias novedades sin abrir, compruebe el contador; abra una por una y
+  confirme que disminuye y se sincroniza también en otro dispositivo tras
+  actualizar. Verifique una reasignación entre operadores y los IDs iguales
+  entre fuentes. El total inicial considera no vistas las novedades sin
+  registro previo de lectura.
+- Pruebe al menos un launcher Samsung/Xiaomi y el launcher objetivo. Android no
+  garantiza badges numéricos: algunos launchers solo muestran un punto o no
+  los admiten. La versión actual de Expo puede cancelar todas las notificaciones
+  al poner el badge a cero en Android; la app evita hacerlo si hay avisos de
+  otro tipo, por lo que el contador podría quedar desactualizado hasta que
+  desaparezcan esos avisos. Los permisos/canales pueden bloquearse por usuario.
+- En Android y en un iPhone con build firmado, registre ambos dispositivos del
+  operador, cree y asigne una tarea y verifique una entrega por dispositivo.
+  Complete la tarea y compruebe el aviso al creador; después ciérrela y
+  compruebe el aviso al operador. Repita con la app abierta, minimizada y
+  cerrada y revise los tickets y receipts para cada evento. Al tocar el aviso,
+  verifique Tareas para asignación/cierre y Tareas creadas para completada.
+  Pruebe también el caso sin token activo y revise la advertencia de cierre.
 
 `GET /health` verifica que la API responde; `GET /health/database` verifica
 que la conexión configurada puede ejecutar `SELECT 1`. Este último devuelve

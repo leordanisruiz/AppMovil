@@ -21,6 +21,34 @@ class NovedadesService:
         self._novedades_repository = novedades_repository
         self._operador_repository = operador_repository
 
+    def marcar_vista(
+        self,
+        db: Session,
+        *,
+        tipo_documento: str,
+        identificacion: str,
+        categoria: str,
+        id_novedad: int,
+    ) -> None:
+        try:
+            operador = self._operador_repository.get_by_identity(
+                db, tipo_documento=tipo_documento, identificacion=identificacion,
+            )
+            try:
+                operator_code = int(str(operador["Codigo"]).strip()) if operador is not None else 0
+            except (KeyError, TypeError, ValueError):
+                operator_code = 0
+            if operator_code <= 0:
+                raise HTTPException(status_code=403, detail="El usuario no tiene un código de operador válido.")
+            if not self._novedades_repository.mark_viewed(
+                db, codigo_operador=operator_code, categoria=categoria, id_novedad=id_novedad,
+            ):
+                raise HTTPException(status_code=404, detail="La novedad no está disponible para este operador.")
+        except SQLAlchemyError as exc:
+            db.rollback()
+            self._raise_database_unavailable(exc)
+        logger.info("Novelty viewed: category=%s novelty=%s.", categoria, id_novedad)
+
     def consultar(
         self,
         db: Session,

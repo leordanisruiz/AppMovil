@@ -27,6 +27,18 @@ class Novedad(BaseModel):
     Estado: str | None
     Vehiculo: str | None = None
     Ruta: str | None = None
+    Vista: bool = False
+
+
+class NovedadVistaRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    categoria: Literal["ico", "inasistencias", "danos", "isv"]
+    id_novedad: int = Field(gt=0)
+
+
+class NovedadVistaResponse(BaseModel):
+    registrada: bool
 
 
 class NovedadesResponse(BaseModel):

@@ -118,6 +118,24 @@ class TareasRepositoryTests(unittest.TestCase):
             statement,
         )
 
+    def test_closing_queues_operator_notification_and_warns_without_tokens(self) -> None:
+        task_result = Mock()
+        task_result.mappings.return_value.one_or_none.return_value = {"id": 55}
+        enqueue_result = Mock(rowcount=0)
+        db = Mock()
+        db.execute.side_effect = [task_result, enqueue_result]
+
+        with self.assertLogs("app.repositories.tareas_repository", level="WARNING"):
+            task = TareasRepository().close_created_task(
+                cast(Session, db), tarea_id=55, usuario_creacion="CC-123",
+            )
+
+        self.assertEqual(task, {"id": 55})
+        statement, parameters = db.execute.call_args_list[1].args
+        self.assertIs(statement, tareas_repository._ENQUEUE_TASK_STATUS_NOTIFICATIONS)
+        self.assertEqual(parameters, {"task_id": 55, "task_event": "cerrada"})
+        db.commit.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

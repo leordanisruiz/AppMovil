@@ -9,6 +9,7 @@ export type Novedad = {
   Estado: string | null;
   Vehiculo?: string | null;
   Ruta?: string | null;
+  Vista: boolean;
 };
 
 export type NovedadesResponse = {

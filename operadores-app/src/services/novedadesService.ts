@@ -1,7 +1,17 @@
-import type { NovedadesResponse, NovedadesResumen } from '../types/novedad';
+import type { CategoriaNovedad, NovedadesResponse, NovedadesResumen } from '../types/novedad';
 import { httpClient } from '../api/httpClient';
 
 export const novedadesService = {
+  async markViewed(categoria: CategoriaNovedad, idNovedad: number): Promise<void> {
+    const response = await httpClient.post<{ registrada: boolean }>(
+      '/novedades/vistas',
+      { categoria, id_novedad: idNovedad },
+    );
+    if (!response.data.registrada) {
+      throw new Error('No se confirmó la lectura de la novedad.');
+    }
+  },
+
   async getAll(codigoOperador: string): Promise<NovedadesResumen> {
     const operatorCode = codigoOperador.trim();
     if (!operatorCode) {

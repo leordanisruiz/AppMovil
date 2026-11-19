@@ -2,6 +2,7 @@ import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { AndroidImportance } from 'expo-notifications';
 import Constants from 'expo-constants';
+import type { TaskNotificationDestination } from './notificationService';
 
 export const NOVELTY_CHANNEL_ID = 'novedades';
 export const TASK_CHANNEL_ID = 'tareas';
@@ -62,6 +63,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
           importance: channel.importance,
           vibrationPattern: channel.vibrationPattern,
           lightColor: channel.lightColor,
+          showBadge: true,
         }),
       ),
     );
@@ -81,8 +83,18 @@ export async function requestNotificationPermission(): Promise<boolean> {
 export async function syncAppBadge(pendingCount: number): Promise<void> {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
 
-  if (typeof Notifications.setBadgeCountAsync === 'function') {
-    await Notifications.setBadgeCountAsync(Math.max(0, pendingCount));
+  if (typeof Notifications.setBadgeCountAsync !== 'function') {
+    throw new Error('El dispositivo no permite actualizar el contador de la aplicación.');
+  }
+  if (Platform.OS === 'android' && pendingCount <= 0) {
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    if (presented.some((notification) => !isNoveltyNotification(notification.request.content.data))) {
+      throw new Error('No se puede limpiar el contador sin eliminar otras notificaciones activas.');
+    }
+  }
+  const updated = await Notifications.setBadgeCountAsync(Math.max(0, pendingCount));
+  if (!updated) {
+    throw new Error('El lanzador no admite actualizar el contador de la aplicación.');
   }
 }
 
@@ -107,7 +119,7 @@ export async function getExpoPushToken(): Promise<string | null> {
 export function subscribeToNoveltyNavigation(
   onOpenNovedades: () => void,
   onNotificationReceived: () => void,
-  onOpenTasks: () => void,
+  onOpenTasks: (destination: TaskNotificationDestination) => void,
 ): () => void {
   const lastResponse = typeof Notifications.getLastNotificationResponse === 'function'
     ? Notifications.getLastNotificationResponse()
@@ -121,7 +133,7 @@ export function subscribeToNoveltyNavigation(
     }
   } else if (isTaskNotification(lastData)) {
     onNotificationReceived();
-    onOpenTasks();
+    onOpenTasks(taskNotificationDestination(lastData));
     if (typeof Notifications.clearLastNotificationResponse === 'function') {
       Notifications.clearLastNotificationResponse();
     }
@@ -145,7 +157,7 @@ export function subscribeToNoveltyNavigation(
         }
       } else if (isTaskNotification(response.notification.request.content.data)) {
         onNotificationReceived();
-        onOpenTasks();
+        onOpenTasks(taskNotificationDestination(response.notification.request.content.data));
         if (typeof Notifications.clearLastNotificationResponse === 'function') {
           Notifications.clearLastNotificationResponse();
         }
@@ -174,4 +186,18 @@ function isTaskNotification(data: unknown): boolean {
     'tipo' in data &&
     data.tipo === 'tarea'
   );
+}
+
+function taskNotificationDestination(data: unknown): TaskNotificationDestination {
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    'evento' in data &&
+    data.evento === 'cambio_estado' &&
+    'estado' in data &&
+    data.estado === 'COMPLETADA'
+  ) {
+    return 'creadas';
+  }
+  return 'asignadas';
 }

@@ -1,6 +1,8 @@
 import { Platform } from 'react-native';
 import { isRunningInExpoGo } from 'expo';
 
+export type TaskNotificationDestination = 'asignadas' | 'creadas';
+
 export function areNativeNotificationsAvailable(): boolean {
   // expo-notifications 58.1.6 can crash on import in Expo Go for Android
   // because Expo Go does not register ExpoTopicSubscriptionModule.
@@ -31,7 +33,7 @@ export async function syncAppBadge(pendingCount: number): Promise<void> {
 export function subscribeToNoveltyNavigation(
   onOpenNovedades: () => void,
   onNotificationReceived: () => void,
-  onOpenTasks: () => void,
+  onOpenTasks: (destination: TaskNotificationDestination) => void,
 ): () => void {
   if (Platform.OS === 'web' || !areNativeNotificationsAvailable()) return () => {};
 

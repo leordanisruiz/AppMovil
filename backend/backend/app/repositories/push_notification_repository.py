@@ -4,7 +4,35 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.repositories.novedades_repository import ISV_FILTER
+from app.repositories.novedades_repository import (
+    DANOS_FILTER,
+    ICO_FILTER,
+    INASISTENCIAS_FILTER,
+    ISV_FILTER,
+    NovedadesRepository,
+)
+
+_SICO_CATEGORY = f"""CASE
+    WHEN {ISV_FILTER} THEN 'isv'
+    WHEN {DANOS_FILTER} THEN 'danos'
+    WHEN {INASISTENCIAS_FILTER} THEN 'inasistencias'
+    ELSE 'otras'
+END"""
+
+_CURRENT_NOVELTIES = f"""
+    SELECT 'sico' AS fuente, fns."Id" AS id_novedad,
+           NULLIF(BTRIM(fns."Codigo"::text), '') AS codigo_operador,
+           {_SICO_CATEGORY} AS categoria
+    FROM "DW_SUMA"."FactNovedadesSico" AS fns
+    WHERE fns."Estado" IS NULL
+       OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')
+    UNION ALL
+    SELECT 'ico' AS fuente, fi."IdIco" AS id_novedad,
+           NULLIF(BTRIM(REPLACE(fi."IdSaeConductor"::text, '.0', '')), '') AS codigo_operador,
+           'ico' AS categoria
+    FROM "DW_SUMA"."FactICO" AS fi
+    WHERE {ICO_FILTER}
+"""
 
 _POLL_OPEN_NOVELTIES = text(
     """
@@ -43,48 +71,108 @@ _MARK_INITIAL_SNAPSHOT_COMPLETE = text(
     """
 )
 
-_POLL_NEW_NOVELTIES = text(
+_IS_CATEGORIES_INITIALIZED = text(
+    'SELECT categorias_inicializadas FROM "DW_CONFIG".expo_push_poll_state WHERE id = 1'
+)
+
+_SNAPSHOT_CATEGORIES = text(
+    f"""
+    INSERT INTO "DW_CONFIG".expo_push_novelty_state
+        (fuente, id_novedad, codigo_operador, categoria, revision)
+    SELECT 'sico', seen.id_novedad, NULLIF(BTRIM(seen.codigo_operador::text), ''),
+           {_SICO_CATEGORY}, 0
+    FROM "DW_CONFIG".expo_push_seen_novelties AS seen
+    JOIN "DW_SUMA"."FactNovedadesSico" AS fns ON fns."Id" = seen.id_novedad
+    UNION ALL
+    SELECT 'ico', fi."IdIco",
+           NULLIF(BTRIM(REPLACE(fi."IdSaeConductor"::text, '.0', '')), ''),
+           'ico', 0
+    FROM "DW_SUMA"."FactICO" AS fi
+    WHERE {ICO_FILTER}
+    ON CONFLICT (fuente, id_novedad) DO NOTHING
     """
-    WITH newly_seen AS (
-        INSERT INTO "DW_CONFIG".expo_push_seen_novelties (
-            id_novedad,
-            codigo_operador,
-            primera_vez_vista,
-            historica
-        )
-        SELECT DISTINCT
-            fns."Id",
-            fns."Codigo",
-            CURRENT_TIMESTAMP,
-            FALSE
-        FROM "DW_SUMA"."FactNovedadesSico" AS fns
-        WHERE (
-            fns."Estado" IS NULL
-            OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')
-        )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM "DW_CONFIG".expo_push_seen_novelties AS seen
-              WHERE seen.id_novedad = fns."Id"
+)
+
+_MARK_CATEGORIES_INITIALIZED = text(
+    'UPDATE "DW_CONFIG".expo_push_poll_state SET categorias_inicializadas = TRUE WHERE id = 1'
+)
+
+_POLL_NEW_NOVELTIES = text(
+    f"""
+    WITH current_novelties AS (
+        {_CURRENT_NOVELTIES}
+    ), changed AS (
+        INSERT INTO "DW_CONFIG".expo_push_novelty_state AS previous
+            (fuente, id_novedad, codigo_operador, categoria, revision)
+        SELECT DISTINCT fuente, id_novedad, codigo_operador, categoria, 1
+        FROM current_novelties
+        WHERE id_novedad IS NOT NULL
+        ON CONFLICT (fuente, id_novedad) DO UPDATE
+        SET codigo_operador = EXCLUDED.codigo_operador,
+            categoria = EXCLUDED.categoria,
+            revision = previous.revision + 1
+        WHERE previous.codigo_operador IS DISTINCT FROM EXCLUDED.codigo_operador
+           OR previous.categoria IS DISTINCT FROM EXCLUDED.categoria
+        RETURNING fuente, id_novedad, codigo_operador, categoria, revision
+    ), reset_reads AS (
+        DELETE FROM "DW_CONFIG".novedades_vistas AS viewed
+        USING changed, "DW_CONFIG".expo_push_novelty_state AS previous
+        WHERE viewed.codigo_operador = changed.codigo_operador
+          AND viewed.id_novedad = changed.id_novedad
+          AND previous.fuente = changed.fuente
+          AND previous.id_novedad = changed.id_novedad
+          AND (previous.codigo_operador IS DISTINCT FROM changed.codigo_operador
+               OR previous.categoria IS DISTINCT FROM changed.categoria)
+          AND ((changed.fuente = 'ico' AND viewed.categoria = 'ico')
+               OR (changed.fuente = 'sico' AND viewed.categoria <> 'ico'))
+        RETURNING viewed.id_novedad
+    ), cancel_stale AS (
+        UPDATE "DW_CONFIG".expo_push_outbox AS delivery
+        SET estado = 'cancelado', lease_until = NULL, claim_id = NULL
+        FROM "DW_CONFIG".expo_push_novelty_events AS event
+        WHERE delivery.novelty_event_id = event.id
+          AND delivery.estado = 'pendiente'
+          AND (
+              EXISTS (
+                  SELECT 1 FROM changed
+                  WHERE changed.fuente = event.fuente
+                    AND changed.id_novedad = event.id_novedad
+                    AND changed.revision <> event.revision
+              )
+              OR NOT EXISTS (
+                  SELECT 1 FROM current_novelties AS current_novelty
+                  WHERE current_novelty.fuente = event.fuente
+                    AND current_novelty.id_novedad = event.id_novedad
+                    AND current_novelty.codigo_operador = event.codigo_operador
+                    AND current_novelty.categoria = event.categoria
+              )
           )
-        ON CONFLICT (id_novedad) DO NOTHING
-        RETURNING id_novedad, codigo_operador
-    )
-    , eligible_novelties AS (
-        SELECT id_novedad, codigo_operador
-        FROM newly_seen
+        RETURNING delivery.id
+    ), new_events AS (
+        INSERT INTO "DW_CONFIG".expo_push_novelty_events
+            (fuente, id_novedad, codigo_operador, categoria, revision)
+        SELECT fuente, id_novedad, codigo_operador, categoria, revision
+        FROM changed
+        WHERE codigo_operador IS NOT NULL
+        RETURNING id, fuente, id_novedad, codigo_operador, revision
+    ), eligible_novelties AS (
+        SELECT id, fuente, id_novedad, codigo_operador, revision FROM new_events
         UNION ALL
-        SELECT seen.id_novedad, seen.codigo_operador
-        FROM "DW_CONFIG".expo_push_seen_novelties AS seen
-        WHERE seen.historica = FALSE
-          AND NOT EXISTS (
-              SELECT 1
-              FROM newly_seen
-              WHERE newly_seen.id_novedad = seen.id_novedad
-          )
+        SELECT event.id, event.fuente, event.id_novedad, event.codigo_operador, event.revision
+        FROM "DW_CONFIG".expo_push_novelty_events AS event
+        JOIN "DW_CONFIG".expo_push_novelty_state AS current_state
+          ON current_state.fuente = event.fuente
+         AND current_state.id_novedad = event.id_novedad
+         AND current_state.revision = event.revision
+        WHERE NOT EXISTS (
+            SELECT 1 FROM changed
+            WHERE changed.fuente = event.fuente
+              AND changed.id_novedad = event.id_novedad
+        )
     )
     INSERT INTO "DW_CONFIG".expo_push_outbox (
         id_novedad,
+        novelty_event_id,
         token_hash,
         estado,
         intentos,
@@ -92,6 +180,7 @@ _POLL_NEW_NOVELTIES = text(
     )
     SELECT
         eligible_novelties.id_novedad,
+        eligible_novelties.id,
         device.token_hash,
         'pendiente',
         0,
@@ -105,16 +194,12 @@ _POLL_NEW_NOVELTIES = text(
       ON BTRIM(device.tipo_documento) = BTRIM(employee."TipoDocumento"::text)
      AND BTRIM(device.identificacion) = BTRIM(employee."Identificacion"::text)
      AND device.activo = TRUE
-    JOIN "DW_SUMA"."FactNovedadesSico" AS fns
-      ON fns."Id" = eligible_novelties.id_novedad
-     AND BTRIM(fns."Codigo"::text) =
-         BTRIM(eligible_novelties.codigo_operador::text)
-     AND (
-         fns."Estado" IS NULL
-         OR UPPER(BTRIM(fns."Estado")) IN ('PEOCESO', 'PROCESO')
-     )
-    ON CONFLICT (id_novedad, token_hash)
-        WHERE id_novedad IS NOT NULL
+    JOIN current_novelties AS current_novelty
+      ON current_novelty.fuente = eligible_novelties.fuente
+     AND current_novelty.id_novedad = eligible_novelties.id_novedad
+     AND current_novelty.codigo_operador = eligible_novelties.codigo_operador
+    ON CONFLICT (novelty_event_id, token_hash)
+        WHERE novelty_event_id IS NOT NULL
     DO NOTHING
     """
 )
@@ -142,6 +227,7 @@ _CLAIM_OUTBOX = text(
         SELECT
             delivery.id,
             delivery.id_novedad,
+            delivery.novelty_event_id,
             delivery.task_id,
             delivery.task_event,
             delivery.token_hash
@@ -172,8 +258,11 @@ _CLAIM_OUTBOX = text(
      AND device.activo = TRUE
     LEFT JOIN "DW_OPERACIONAL".tareas_operador AS task
       ON task.id = candidates.task_id
+    LEFT JOIN "DW_CONFIG".expo_push_novelty_events AS novelty_event
+      ON novelty_event.id = candidates.novelty_event_id
     LEFT JOIN "DW_SUMA"."FactNovedadesSico" AS fns
       ON fns."Id" = candidates.id_novedad
+     AND (novelty_event.fuente = 'sico' OR novelty_event.id IS NULL)
     WHERE delivery.id = candidates.id
       AND delivery.expo_ticket_id IS NULL
     RETURNING
@@ -186,6 +275,8 @@ _CLAIM_OUTBOX = text(
         device.token_ciphertext,
         task.tipo_tarea,
         task.novedades_ids,
+        novelty_event.categoria AS novelty_category,
+        novelty_event.codigo_operador AS novelty_operator_code,
         fns."Grupo" AS novelty_group,
         CASE WHEN {ISV_FILTER} THEN TRUE ELSE FALSE END AS is_isv
     """
@@ -320,6 +411,9 @@ _CANCEL_TOKEN_DELIVERIES = text(
 
 
 class PushNotificationRepository:
+    def count_unread(self, db: Session, *, codigo_operador: int) -> int:
+        return NovedadesRepository().count_unread(db, codigo_operador=codigo_operador)
+
     def try_acquire_poll_lock(self, db: Session) -> bool:
         return bool(db.execute(_POLL_OPEN_NOVELTIES).scalar_one())
 
@@ -328,6 +422,10 @@ class PushNotificationRepository:
         if not initialized:
             db.execute(_POLL_INITIAL_SNAPSHOT)
             db.execute(_MARK_INITIAL_SNAPSHOT_COMPLETE)
+        if not db.execute(_IS_CATEGORIES_INITIALIZED).scalar_one():
+            db.execute(_SNAPSHOT_CATEGORIES)
+            db.execute(_MARK_CATEGORIES_INITIALIZED)
+        if not initialized:
             return False
 
         db.execute(_POLL_NEW_NOVELTIES)

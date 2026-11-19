@@ -79,7 +79,10 @@ class PushTokenService:
             db.rollback()
             self._raise_database_unavailable(exc)
 
-        logger.info("Expo push token registered for an operator.")
+        logger.info(
+            "Expo push token registered: platform=%s token_hash_prefix=%s.",
+            plataforma, _hash_token(expo_push_token)[:12],
+        )
         return PushTokenResponse(registrado=True)
 
     def deactivate(

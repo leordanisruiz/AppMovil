@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
@@ -55,9 +56,8 @@ class PushNotificationWorker:
                 await asyncio.to_thread(self.run_once)
             except SQLAlchemyError as exc:
                 logger.error(
-                    "Expo notification worker database operation failed (%s): %s",
+                    "Expo notification worker database operation failed (%s).",
                     type(exc).__name__,
-                    getattr(exc, "orig", exc),
                 )
             except (ExpoRetryableError, OSError, ValueError) as exc:
                 logger.error(
@@ -78,9 +78,15 @@ class PushNotificationWorker:
             return
 
         claim_id = str(uuid4())
-        with session_factory.begin() as db:
-            if self._repository.try_acquire_poll_lock(db):
-                self._repository.initialize_or_detect(db)
+        try:
+            with session_factory.begin() as db:
+                if self._repository.try_acquire_poll_lock(db):
+                    self._repository.initialize_or_detect(db)
+        except SQLAlchemyError as exc:
+            logger.error(
+                "Expo novelty polling failed (%s); continuing with queued deliveries.",
+                type(exc).__name__,
+            )
 
         with session_factory.begin() as db:
             deliveries = self._repository.claim_pending(
@@ -96,12 +102,14 @@ class PushNotificationWorker:
                 claim_id=claim_id,
             )
 
+        badge_counts: dict[int, int] = {}
         for delivery in deliveries:
             self._deliver(
                 delivery=delivery,
                 claim_id=claim_id,
                 fernet=fernet,
                 session_factory=session_factory,
+                badge_counts=badge_counts,
             )
         for receipt in receipts:
             self._deliver_receipt(
@@ -117,6 +125,7 @@ class PushNotificationWorker:
         claim_id: str,
         fernet: Fernet,
         session_factory: sessionmaker[Session],
+        badge_counts: dict[int, int],
     ) -> None:
         delivery_id = delivery["id"]
         novelty_id = delivery.get("id_novedad")
@@ -125,6 +134,26 @@ class PushNotificationWorker:
         token_hash = delivery["token_hash"]
         attempt = delivery["intentos"]
         encrypted_token = delivery["token_ciphertext"]
+        novelty_category = delivery.get("novelty_category")
+        operator_code = delivery.get("novelty_operator_code")
+        badge: int | None = None
+
+        if operator_code is not None:
+            try:
+                code = int(operator_code)
+                if code not in badge_counts:
+                    with session_factory.begin() as db:
+                        badge_counts[code] = self._repository.count_unread(db, codigo_operador=code)
+                badge = badge_counts[code]
+            except (SQLAlchemyError, ValueError) as exc:
+                with session_factory.begin() as db:
+                    self._repository.retry(
+                        db, delivery_id=delivery_id, claim_id=claim_id,
+                        delay_seconds=min(60 * 2 ** min(attempt, 10), 21_600),
+                        error_code="UNREAD_COUNT_FAILED",
+                    )
+                logger.error("Could not calculate unread novelty count (%s).", type(exc).__name__)
+                return
 
         try:
             token = fernet.decrypt(encrypted_token.encode("ascii")).decode(
@@ -162,12 +191,24 @@ class PushNotificationWorker:
                     )
             else:
                 novelty_group = str(delivery.get("novelty_group") or "")
-                if delivery.get("is_isv"):
-                    ticket_id = self._push_client.send_isv(token, novelty_id)
-                elif "DA" in novelty_group.upper() and any(char in novelty_group.upper() for char in ("Ñ", "N", "Ã")):
-                    ticket_id = self._push_client.send_operational_damage(token, novelty_id)
+                if novelty_category == "ico":
+                    send_novelty = self._push_client.send_ico
+                elif novelty_category == "isv" or (novelty_category is None and delivery.get("is_isv")):
+                    send_novelty = self._push_client.send_isv
+                elif novelty_category == "danos" or (
+                    novelty_category is None and re.search(r"DA[ÑNÃ]", novelty_group.upper())
+                ):
+                    send_novelty = self._push_client.send_operational_damage
+                elif novelty_category == "inasistencias" or (
+                    novelty_category is None and "INASISTENCIA" in novelty_group.upper()
+                ):
+                    send_novelty = self._push_client.send_absence
                 else:
-                    ticket_id = self._push_client.send(token, novelty_id)
+                    send_novelty = self._push_client.send
+                if badge is None:
+                    ticket_id = send_novelty(token, novelty_id)
+                else:
+                    ticket_id = send_novelty(token, novelty_id, badge=badge)
         except ExpoInvalidPushToken as exc:
             self._finish_failed(
                 delivery_id,
@@ -205,7 +246,10 @@ class PushNotificationWorker:
                     claim_id=claim_id,
                     expo_ticket_id=ticket_id,
                 )
-            logger.info("Expo push ticket accepted.")
+            logger.info(
+                "Expo push ticket accepted: delivery=%s category=%s novelty=%s token_hash_prefix=%s.",
+                delivery_id, novelty_category, novelty_id, str(token_hash)[:12],
+            )
 
     def _finish_failed(
         self,

@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -6,6 +7,8 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.repositories.novedades_repository import DANOS_FILTER, ICO_FILTER, INASISTENCIAS_FILTER
+
+logger = logging.getLogger(__name__)
 
 _TASK_COLUMNS = """
     id,
@@ -637,12 +640,18 @@ class TareasRepository:
         )
         task = result.mappings().one_or_none()
         if task is not None:
-            db.execute(
+            notification_result = db.execute(
                 _ENQUEUE_TASK_STATUS_NOTIFICATIONS,
                 {
                     "task_id": task["id"],
                     "task_event": "cerrada",
                 },
             )
+            notification_count = notification_result.rowcount
             db.commit()
+            if notification_count == 0:
+                logger.warning(
+                    "Task %s closed without any active device to notify.",
+                    task["id"],
+                )
         return task

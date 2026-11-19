@@ -7,6 +7,8 @@ from app.core.database import get_db
 from app.schemas.novedad import (
     NovedadesRequest,
     NovedadesResponse,
+    NovedadVistaRequest,
+    NovedadVistaResponse,
     PushTokenDeactivationResponse,
     PushTokenDeactivationRequest,
     PushTokenRequest,
@@ -52,6 +54,26 @@ def consultar_novedades(
         identificacion=identificacion,
         categoria=consulta.categoria,
     )
+
+@router.post(
+    "/vistas",
+    summary="Marcar una novedad del operador autenticado como vista",
+    response_model=NovedadVistaResponse,
+)
+def marcar_novedad_vista(
+    request: Request,
+    novedad: NovedadVistaRequest,
+    db: Session = Depends(get_db),
+) -> NovedadVistaResponse:
+    tipo_documento, identificacion = _authenticated_identity(request)
+    novedades_service.marcar_vista(
+        db,
+        tipo_documento=tipo_documento,
+        identificacion=identificacion,
+        categoria=novedad.categoria,
+        id_novedad=novedad.id_novedad,
+    )
+    return NovedadVistaResponse(registrada=True)
 
 
 @router.post(
