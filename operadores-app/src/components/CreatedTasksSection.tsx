@@ -589,8 +589,11 @@ function getClosedMessage(task: OperatorTask): string {
     : `La tarea #${task.id} quedó en estado CERRADO.`;
 }
 
-function noveltyCategoryLabel(category: 'ico' | 'inasistencias' | 'danos'): string {
-  return category === 'ico' ? 'ICO' : category === 'danos' ? 'Daño Operativo' : 'Inasistencia';
+function noveltyCategoryLabel(category: 'ico' | 'inasistencias' | 'danos' | 'isv'): string {
+  if (category === 'ico') return 'ICO';
+  if (category === 'danos') return 'Daño Operativo';
+  if (category === 'isv') return 'ISV';
+  return 'Inasistencia';
 }
 
 function formatDate(value: string): string {

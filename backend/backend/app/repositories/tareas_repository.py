@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
-from app.repositories.novedades_repository import DANOS_FILTER, ICO_FILTER, INASISTENCIAS_FILTER
+from app.repositories.novedades_repository import DANOS_FILTER, ICO_FILTER, INASISTENCIAS_FILTER, ISV_FILTER
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,12 @@ _ASSIGNABLE_NOVELTIES = f"""
            fns."Estado", 'danos'::text, fns."Vehiculo"::text, fns."Ruta"::text
     FROM "DW_SUMA"."FactNovedadesSico" AS fns
     WHERE {DANOS_FILTER}
+    UNION ALL
+    SELECT fns."Id", fns."FechaIngreso", BTRIM(fns."Codigo"::text),
+           fns."Novedad", fns."Grupo", fns."Subgrupo", fns."Detalle",
+           fns."Estado", 'isv'::text, fns."Vehiculo"::text, fns."Ruta"::text
+    FROM "DW_SUMA"."FactNovedadesSico" AS fns
+    WHERE {ISV_FILTER}
 """
 
 _ASSIGNABLE_BY_OPERATOR = text(f"""

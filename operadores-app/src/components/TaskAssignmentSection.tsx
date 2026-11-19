@@ -64,7 +64,7 @@ export function TaskAssignmentSection() {
     mutationFn: tareasService.getNovelty,
     onSuccess: (novelties) => {
       setErrorMessage(null);
-      setFeedback(novelties.length === 0 ? 'No encontramos ICO ni inasistencias con ese ID.' : null);
+      setFeedback(novelties.length === 0 ? 'No encontramos novedades abiertas con ese ID.' : null);
     },
     onError: (error: unknown) => {
       setErrorMessage(getApiErrorMessage(error, 'No fue posible buscar la novedad.'));
@@ -509,8 +509,8 @@ function NoveltyRow({
           <DetailField label="Tipo de novedad" value={novelty.tipo_novedad} />
           <DetailField label="Descripción" value={novelty.descripcion} />
           {novelty.categoria !== 'ico' ? <DetailField label="Estado" value={novelty.estado} /> : null}
-          {novelty.categoria === 'danos' ? <DetailField label="Vehículo" value={novelty.vehiculo} /> : null}
-          {novelty.categoria === 'danos' ? <DetailField label="Ruta" value={novelty.ruta} /> : null}
+          {novelty.categoria === 'danos' || novelty.categoria === 'isv' ? <DetailField label="Vehículo" value={novelty.vehiculo} /> : null}
+          {novelty.categoria === 'danos' || novelty.categoria === 'isv' ? <DetailField label="Ruta" value={novelty.ruta} /> : null}
         </View>
       ) : null}
     </View>
@@ -522,7 +522,10 @@ function noveltyKey(novelty: AssignableNovelty): string {
 }
 
 function noveltyCategoryLabel(category: AssignableNovelty['categoria']): string {
-  return category === 'ico' ? 'ICO' : category === 'danos' ? 'Daño Operativo' : 'Inasistencia';
+  if (category === 'ico') return 'ICO';
+  if (category === 'danos') return 'Daño Operativo';
+  if (category === 'isv') return 'ISV';
+  return 'Inasistencia';
 }
 
 function DetailField({ label, value }: { label: string; value: string | number | null | undefined }) {

@@ -96,7 +96,7 @@ def listar_novedades_operador(
 @router.get(
     "/asignacion/operadores/{codigo_operador}/novedades-disponibles",
     response_model=list[NovedadAsignacion],
-    summary="Consultar ICO e inasistencias de un operador",
+    summary="Consultar novedades disponibles de un operador",
 )
 def listar_novedades_disponibles(
     codigo_operador: int, request: Request, db: Session = Depends(get_db),
@@ -111,7 +111,7 @@ def listar_novedades_disponibles(
 @router.get(
     "/asignacion/novedades/buscar/{novedad_id}",
     response_model=list[NovedadAsignacion],
-    summary="Buscar ICO e inasistencias por ID",
+    summary="Buscar novedades disponibles por ID",
 )
 def buscar_novedades(
     novedad_id: int, request: Request, db: Session = Depends(get_db),

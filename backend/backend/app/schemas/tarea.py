@@ -11,7 +11,7 @@ EvidenceType = Literal["image", "video"]
 class NovedadReferencia(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    categoria: Literal["ico", "inasistencias", "danos"]
+    categoria: Literal["ico", "inasistencias", "danos", "isv"]
     id_novedad: int = Field(gt=0)
 
 
@@ -89,7 +89,7 @@ class NovedadAsignacion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id_novedad: int
-    categoria: Literal["ico", "inasistencias", "danos"] | None = None
+    categoria: Literal["ico", "inasistencias", "danos", "isv"] | None = None
     fecha_novedad: date | datetime | None
     codigo: int
     tipo_novedad: str | None

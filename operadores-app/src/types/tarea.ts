@@ -37,7 +37,7 @@ export type AssignableOperator = {
 
 export type AssignableNovelty = {
   id_novedad: number;
-  categoria: 'ico' | 'inasistencias' | 'danos';
+  categoria: 'ico' | 'inasistencias' | 'danos' | 'isv';
   fecha_novedad: string | null;
   codigo: number;
   tipo_novedad: string | null;
@@ -54,7 +54,7 @@ export type AssignableNovelty = {
 };
 
 export type NoveltyReference = {
-  categoria: 'ico' | 'inasistencias' | 'danos';
+  categoria: 'ico' | 'inasistencias' | 'danos' | 'isv';
   id_novedad: number;
 };
 
