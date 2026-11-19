@@ -10,6 +10,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -52,7 +53,9 @@ export function CreatedTasksSection({ initialStatusFilter = 'TODAS' }: { initial
       }),
     [selectedTaskId],
   );
-  const [currentPage, setCurrentPage] = useState(1);
+  const [mobileStatusFilter, setMobileStatusFilter] = useState<TaskStatusFilter>(initialStatusFilter);
+  const [mobileSearch, setMobileSearch] = useState('');
+  const [mobilePageState, setMobilePageState] = useState({ key: '', page: 1 });
   const [closedTask, setClosedTask] = useState<OperatorTask | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [warningMotion] = useState(() => new Animated.Value(0));
@@ -94,11 +97,38 @@ export function CreatedTasksSection({ initialStatusFilter = 'TODAS' }: { initial
     },
   });
 
-  const tasks = tasksQuery.data ?? [];
-  const pageCount = Math.max(1, Math.ceil(tasks.length / PAGE_SIZE));
-  const page = Math.min(currentPage, pageCount);
-  const pageTasks = tasks.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
+  const tasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data]);
+  const mobileFilters: { id: TaskStatusFilter; label: string; color: string }[] = [
+    { id: 'TODAS', label: 'Todos', color: '#536273' },
+    { id: 'PENDIENTE', label: 'Pendientes', color: '#B86A00' },
+    { id: 'EN_PROCESO', label: 'En proceso', color: '#1769AA' },
+    { id: 'COMPLETADA', label: 'Completadas', color: '#20845A' },
+    { id: 'CERRADO', label: 'Cerradas', color: '#52606D' },
+  ];
+  const counts = useMemo(() => tasks.reduce<Record<TaskStatusFilter, number>>((result, task) => {
+    result.TODAS += 1;
+    const status = task.estado.trim().toUpperCase();
+    if (status === 'PENDIENTE') result.PENDIENTE += 1;
+    else if (status === 'EN_PROCESO') result.EN_PROCESO += 1;
+    else if (status === 'COMPLETADA') result.COMPLETADA += 1;
+    else if (status === 'CERRADO' || status === 'CERRADA') result.CERRADO += 1;
+    return result;
+  }, { TODAS: 0, PENDIENTE: 0, EN_PROCESO: 0, COMPLETADA: 0, CERRADO: 0 }), [tasks]);
+  const filteredMobileTasks = useMemo(() => {
+    const term = mobileSearch.trim().toLowerCase();
+    return tasks.filter((task) => {
+      const status = task.estado.trim().toUpperCase();
+      const matchesStatus = mobileStatusFilter === 'TODAS' || status === mobileStatusFilter
+        || (mobileStatusFilter === 'CERRADO' && status === 'CERRADA');
+      const matchesSearch = !term || `${task.id} ${task.tipo_tarea} ${task.descripcion} ${task.operador_id}`.toLowerCase().includes(term);
+      return matchesStatus && matchesSearch;
+    });
+  }, [mobileSearch, mobileStatusFilter, tasks]);
+  const mobilePageCount = Math.max(1, Math.ceil(filteredMobileTasks.length / PAGE_SIZE));
+  const mobilePageKey = `${mobileStatusFilter}\u0000${mobileSearch}`;
+  const mobilePage = Math.min(mobilePageState.key === mobilePageKey ? mobilePageState.page : 1, mobilePageCount);
+  const pageTasks = filteredMobileTasks.slice((mobilePage - 1) * PAGE_SIZE, mobilePage * PAGE_SIZE);
+  const changeMobilePage = (next: number) => setMobilePageState({ key: mobilePageKey, page: next });
   useEffect(() => {
     if (selectedTaskId === null) return undefined;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -216,6 +246,37 @@ export function CreatedTasksSection({ initialStatusFilter = 'TODAS' }: { initial
         supportingText="Haz seguimiento a las tareas que asignaste a los operadores."
       />
 
+      {!desktop ? (
+        <View style={styles.mobileControls}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mobileFilterBar}>
+            {mobileFilters.map((filter) => {
+              const selected = mobileStatusFilter === filter.id;
+              return (
+                <Pressable
+                  key={filter.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => setMobileStatusFilter(filter.id)}
+                  style={[styles.mobileFilterChip, { borderColor: filter.color, backgroundColor: selected ? filter.color : colors.white }, selected && styles.mobileFilterSelected]}
+                >
+                  <Text style={[styles.mobileFilterText, { color: selected ? colors.white : filter.color }]}>
+                    {filter.label} ({counts[filter.id]})
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+          <TextInput
+            accessibilityLabel="Buscar tarea o código de operador"
+            onChangeText={setMobileSearch}
+            placeholder="Buscar tarea, descripción o código de operador..."
+            placeholderTextColor={colors.textMuted}
+            style={styles.mobileSearch}
+            value={mobileSearch}
+          />
+        </View>
+      ) : null}
+
       {tasksQuery.isLoading ? (
         <ActivityIndicator color={colors.primary} style={styles.loader} />
       ) : tasksQuery.isError ? (
@@ -249,9 +310,6 @@ export function CreatedTasksSection({ initialStatusFilter = 'TODAS' }: { initial
         />
       ) : (
         <View style={styles.tableCard}>
-          <Text style={styles.tableHint}>
-            Toca una fila para consultar el detalle y las evidencias.
-          </Text>
           <ScrollView horizontal showsHorizontalScrollIndicator>
             <View style={Platform.OS === 'web' ? styles.webTableContent : undefined}>
               <View style={[styles.tableRow, styles.tableHeader, Platform.OS === 'web' && styles.webTableRow]}>
@@ -297,41 +355,42 @@ export function CreatedTasksSection({ initialStatusFilter = 'TODAS' }: { initial
               ))}
             </View>
           </ScrollView>
+          {filteredMobileTasks.length === 0 ? <Text style={styles.mobileNoResults}>No hay tareas que coincidan con los filtros.</Text> : null}
           <View style={styles.pagination}>
             <Text style={styles.paginationLabel}>
-              {tasks.length === 0
+              {filteredMobileTasks.length === 0
                 ? '0 tareas'
-                : `${(page - 1) * PAGE_SIZE + 1}–${Math.min(
-                    page * PAGE_SIZE,
-                    tasks.length,
-                  )} de ${tasks.length}`}
+                : `${(mobilePage - 1) * PAGE_SIZE + 1}–${Math.min(
+                    mobilePage * PAGE_SIZE,
+                    filteredMobileTasks.length,
+                  )} de ${filteredMobileTasks.length}`}
             </Text>
             <View style={styles.paginationActions}>
               <Pressable
                 accessibilityLabel="Página anterior"
                 accessibilityRole="button"
-                accessibilityState={{ disabled: page <= 1 }}
-                disabled={page <= 1}
-                onPress={() => setCurrentPage(page - 1)}
+                accessibilityState={{ disabled: mobilePage <= 1 }}
+                disabled={mobilePage <= 1}
+                onPress={() => changeMobilePage(mobilePage - 1)}
                 style={[
                   styles.pageButton,
-                  page <= 1 && styles.pageButtonDisabled,
+                  mobilePage <= 1 && styles.pageButtonDisabled,
                 ]}
               >
                 <Text style={styles.pageButtonText}>‹</Text>
               </Pressable>
               <Text style={styles.pageNumber}>
-                {page} / {pageCount}
+                {mobilePage} / {mobilePageCount}
               </Text>
               <Pressable
                 accessibilityLabel="Página siguiente"
                 accessibilityRole="button"
-                accessibilityState={{ disabled: page >= pageCount }}
-                disabled={page >= pageCount}
-                onPress={() => setCurrentPage(page + 1)}
+                accessibilityState={{ disabled: mobilePage >= mobilePageCount }}
+                disabled={mobilePage >= mobilePageCount}
+                onPress={() => changeMobilePage(mobilePage + 1)}
                 style={[
                   styles.pageButton,
-                  page >= pageCount && styles.pageButtonDisabled,
+                  mobilePage >= mobilePageCount && styles.pageButtonDisabled,
                 ]}
               >
                 <Text style={styles.pageButtonText}>›</Text>
@@ -549,6 +608,13 @@ const styles = StyleSheet.create({
     gap: spacing.medium,
   },
   webSection: { alignSelf: 'center', maxWidth: 1120, width: '100%' },
+  mobileControls: { gap: spacing.small },
+  mobileFilterBar: { alignItems: 'center', flexDirection: 'row', gap: spacing.small, paddingRight: spacing.medium },
+  mobileFilterChip: { alignItems: 'center', borderRadius: radius.pill, borderWidth: 1, justifyContent: 'center', minHeight: 40, paddingHorizontal: spacing.medium },
+  mobileFilterSelected: { elevation: 2, shadowColor: '#261919', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.16, shadowRadius: 4 },
+  mobileFilterText: { fontSize: typography.caption, fontWeight: '800' },
+  mobileSearch: { backgroundColor: colors.white, borderColor: colors.border, borderRadius: radius.medium, borderWidth: 1, color: colors.text, fontSize: typography.small, minHeight: 44, paddingHorizontal: spacing.medium },
+  mobileNoResults: { color: colors.textMuted, fontSize: typography.small, padding: spacing.medium, textAlign: 'center' },
   webTableContent: { minWidth: '100%' },
   webTableRow: { width: '100%' },
   webColumn: { flexGrow: 1 },

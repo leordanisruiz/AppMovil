@@ -1,6 +1,9 @@
 import json
 import logging
 import mimetypes
+import os
+import tempfile
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -29,6 +32,7 @@ from app.schemas.tarea import (
     TareaCreateRequest,
     TareaEstadoUpdate,
     TareaEvidenciasResponse,
+    DescargaEvidenciasSeleccionadasRequest,
     TareaResponse,
     TipoTareaResponse,
 )
@@ -498,6 +502,46 @@ def descargar_evidencia(
         started=started,
         media_type=_media_type_for(path.name),
         filename=download_name,
+    )
+
+
+@router.post(
+    "/evidencias/seleccionadas/download",
+    summary="Descargar evidencias seleccionadas como ZIP",
+    responses={
+        404: {"description": "Una evidencia no existe o no es accesible."},
+        503: {"description": "No fue posible consultar las tareas."},
+    },
+)
+def descargar_evidencias_seleccionadas(
+    consulta: DescargaEvidenciasSeleccionadasRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    tipo_documento, identificacion = _authenticated_identity(request)
+    temporary = tempfile.NamedTemporaryFile(prefix="evidencias-", suffix=".zip", delete=False)
+    archive_path = Path(temporary.name)
+    temporary.close()
+    try:
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for item in consulta.evidencias:
+                path, download_name = tareas_service.get_evidence_path(
+                    db,
+                    tarea_id=item.tarea_id,
+                    nombre=item.nombre,
+                    tipo_documento=tipo_documento,
+                    identificacion=identificacion,
+                )
+                archive.write(path, arcname=f"Tarea-{item.tarea_id}/{download_name}")
+    except Exception:
+        archive_path.unlink(missing_ok=True)
+        raise
+
+    return FileResponse(
+        archive_path,
+        media_type="application/zip",
+        filename="evidencias-seleccionadas.zip",
+        background=BackgroundTask(os.unlink, archive_path),
     )
 
 

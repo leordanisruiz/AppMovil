@@ -22,8 +22,10 @@ export function DesktopTasksTable({
   const [pageState, setPageState] = useState({ key: '', page: 1 });
 
   const filtered = useMemo(() => tasks
-    .filter((task) => statusFilter === 'TODAS' || task.estado === statusFilter)
-    .filter((task) => `${task.id} ${task.tipo_tarea} ${task.descripcion}`.toLowerCase().includes(query.trim().toLowerCase()))
+    .filter((task) => statusFilter === 'TODAS'
+      || task.estado.trim().toUpperCase() === statusFilter
+      || (statusFilter === 'CERRADO' && task.estado.trim().toUpperCase() === 'CERRADA'))
+    .filter((task) => `${task.id} ${task.tipo_tarea} ${task.descripcion} ${task.operador_id}`.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => (new Date(a.fecha_creacion).getTime() - new Date(b.fecha_creacion).getTime()) * (newestFirst ? -1 : 1)), [newestFirst, query, statusFilter, tasks]);
   const filters: TaskStatusFilter[] = ['TODAS', 'PENDIENTE', 'EN_PROCESO', 'COMPLETADA', 'CERRADO'];
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -37,10 +39,10 @@ export function DesktopTasksTable({
       <View style={styles.filterPanel}>
         <Text style={styles.filterTitle}>Filtros</Text>
         <Text style={styles.filterCaption}>ESTADO DE LA TAREA</Text>
-        {filters.map((filter) => <Pressable key={filter} onPress={() => setStatusFilter(filter)} style={[styles.filterOption, statusFilter === filter && styles.filterOptionActive]}><Text style={[styles.filterOptionText, statusFilter === filter && styles.filterOptionTextActive]}>{statusLabel(filter)}</Text><Text style={styles.filterCount}>{filter === 'TODAS' ? tasks.length : tasks.filter((task) => task.estado === filter).length}</Text></Pressable>)}
+        {filters.map((filter) => <Pressable key={filter} onPress={() => setStatusFilter(filter)} style={[styles.filterOption, statusFilter === filter && styles.filterOptionActive]}><Text style={[styles.filterOptionText, statusFilter === filter && styles.filterOptionTextActive]}>{statusLabel(filter)}</Text><Text style={styles.filterCount}>{filter === 'TODAS' ? tasks.length : tasks.filter((task) => task.estado.trim().toUpperCase() === filter || (filter === 'CERRADO' && task.estado.trim().toUpperCase() === 'CERRADA')).length}</Text></Pressable>)}
       </View>
       <View style={styles.main}>
-        <View style={styles.toolbar}><View><Text style={styles.heading}>Tareas</Text><Text style={styles.subheading}>{filtered.length} resultados</Text></View><View style={styles.controls}><TextInput accessibilityLabel="Buscar tareas" onChangeText={setQuery} placeholder="Buscar por tarea o descripción…" placeholderTextColor="#929AA4" style={styles.search} value={query}/><Pressable accessibilityRole="button" onPress={() => setNewestFirst((current) => !current)} style={styles.sortButton}><Text style={styles.sortText}>↕  Fecha {newestFirst ? 'más reciente' : 'más antigua'}</Text></Pressable></View></View>
+        <View style={styles.toolbar}><View><Text style={styles.heading}>Tareas</Text><Text style={styles.subheading}>{filtered.length} resultados</Text></View><View style={styles.controls}><TextInput accessibilityLabel="Buscar tarea o código de operador" onChangeText={setQuery} placeholder="Buscar tarea, descripción o código de operador…" placeholderTextColor="#929AA4" style={styles.search} value={query}/><Pressable accessibilityRole="button" onPress={() => setNewestFirst((current) => !current)} style={styles.sortButton}><Text style={styles.sortText}>↕  Fecha {newestFirst ? 'más reciente' : 'más antigua'}</Text></Pressable></View></View>
         <View style={styles.table}>
           <View style={styles.tableHeader}><Text style={[styles.tableHeaderText, styles.taskColumn]}>TAREA</Text><Text style={[styles.tableHeaderText, styles.descriptionColumn]}>DESCRIPCIÓN</Text><Text style={[styles.tableHeaderText, styles.dateColumn]}>FECHA</Text><Text style={[styles.tableHeaderText, styles.evidenceColumn]}>EVIDENCIAS</Text><Text style={[styles.tableHeaderText, styles.statusColumn]}>ESTADO</Text><Text style={styles.arrowColumn}/></View>
           {pageTasks.map((task) => <Pressable key={task.id} onPress={() => onOpen(task)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}><View style={styles.taskColumn}><Text style={styles.taskId}>#{task.id}</Text><Text numberOfLines={1} style={styles.taskType}>{task.tipo_tarea}</Text></View><Text numberOfLines={2} style={[styles.cell, styles.descriptionColumn]}>{task.descripcion}</Text><Text style={[styles.cell, styles.dateColumn]}>{formatDate(task.fecha_creacion)}</Text><Text style={[styles.cell, styles.evidenceColumn]}>{task.evidencias.length} archivo{task.evidencias.length === 1 ? '' : 's'}</Text><View style={styles.statusColumn}><Text style={[styles.status, { backgroundColor: statusTone(task.estado).background, color: statusTone(task.estado).text }]}>● {statusLabel(task.estado)}</Text></View><Text style={styles.arrow}>›</Text></Pressable>)}

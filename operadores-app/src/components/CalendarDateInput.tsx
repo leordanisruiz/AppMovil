@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Modal, Pressable, Text, View } from 'react-native';
+import { Modal, Pressable, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { colors, radius, spacing } from '../theme';
 
 const WEEKDAYS = ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa', 'Do'];
@@ -8,10 +8,12 @@ export function CalendarDateInput({
   label,
   value,
   onChange,
+  style,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  style?: StyleProp<ViewStyle>;
 }) {
   const [visible, setVisible] = useState(false);
   const [month, setMonth] = useState(() => value ? new Date(`${value}T12:00:00`) : new Date());
@@ -33,7 +35,7 @@ export function CalendarDateInput({
 
   return (
     <>
-      <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${displayValue}. Abrir calendario`} onPress={() => { if (value) setMonth(new Date(`${value}T12:00:00`)); setVisible(true); }} style={styles.input}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${displayValue}. Abrir calendario`} onPress={() => { if (value) setMonth(new Date(`${value}T12:00:00`)); setVisible(true); }} style={[styles.input, style]}>
         <Text style={[styles.inputText, !value && styles.placeholder]}>{displayValue}</Text>
         <Text style={styles.calendarIcon}>▦</Text>
       </Pressable>
@@ -65,7 +67,7 @@ export function CalendarDateInput({
 }
 
 const styles = {
-  input: { alignItems: 'center' as const, backgroundColor: colors.white, borderColor: colors.border, borderRadius: 8, borderWidth: 1, flexDirection: 'row' as const, height: 40, justifyContent: 'space-between' as const, paddingHorizontal: 10, width: 190 },
+  input: { alignItems: 'center' as const, backgroundColor: colors.white, borderColor: colors.border, borderRadius: 8, borderWidth: 1, flexDirection: 'row' as const, height: 40, justifyContent: 'space-between' as const, paddingHorizontal: 10 },
   inputText: { color: colors.text, fontSize: 12 },
   placeholder: { color: colors.textMuted },
   calendarIcon: { color: colors.primary, fontSize: 17 },

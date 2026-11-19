@@ -66,7 +66,7 @@ const sectionTitles: Record<PortalSection, string> = {
   evidencias: 'Evidencias',
 };
 
-const appVersion = Constants.expoConfig?.version ?? '1.2.5';
+const appVersion = Constants.expoConfig?.version ?? '1.2.6';
 const noveltyCategories: { id: CategoriaNovedad; label: string }[] = [
   { id: 'ico', label: 'ICO' },
   { id: 'isv', label: 'ISV' },

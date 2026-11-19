@@ -32,10 +32,17 @@ export type GalleryEvidence = TaskEvidence & {
   taskDescription?: string;
 };
 
+export function getEvidenceSelectionKey(evidence: GalleryEvidence, fallbackTaskId: number): string {
+  return `${evidence.taskId ?? fallbackTaskId}:${evidence.nombre}`;
+}
+
 type EvidenceGalleryProps = {
   taskId: number;
   evidences: GalleryEvidence[];
   emptyMessage: string;
+  selectionEnabled?: boolean;
+  selectedEvidenceKeys?: string[];
+  onToggleEvidence?: (key: string) => void;
 };
 
 type EvidenceAction = 'download' | 'share';
@@ -49,6 +56,9 @@ export function EvidenceGallery({
   taskId,
   evidences,
   emptyMessage,
+  selectionEnabled = false,
+  selectedEvidenceKeys = [],
+  onToggleEvidence,
 }: EvidenceGalleryProps) {
   const { width: viewportWidth } = useWindowDimensions();
   const desktop = Platform.OS === 'web' && viewportWidth >= 1200;
@@ -98,7 +108,17 @@ export function EvidenceGallery({
             headersReady={headersReady}
             shouldLoadPreview={evidences.slice(0, index + 1).length <= previewLimit}
             onPreviewSettled={() => setPreviewLimit((current) => current + 1)}
-            onPress={() => setActiveIndex(index)}
+            onPress={() => {
+              const key = getEvidenceSelectionKey(evidence, taskId);
+              if (selectionEnabled && Platform.OS !== 'web' && selectedEvidenceKeys.length > 0) {
+                onToggleEvidence?.(key);
+              } else {
+                setActiveIndex(index);
+              }
+            }}
+            onLongPress={() => onToggleEvidence?.(getEvidenceSelectionKey(evidence, taskId))}
+            selectable={selectionEnabled}
+            selected={selectedEvidenceKeys.includes(getEvidenceSelectionKey(evidence, taskId))}
             taskId={evidence.taskId ?? taskId}
             cardWidth={cardWidth}
           />
@@ -125,6 +145,9 @@ function EvidenceCard({
   shouldLoadPreview,
   onPreviewSettled,
   onPress,
+  onLongPress,
+  selectable,
+  selected,
   cardWidth,
 }: {
   taskId: number;
@@ -134,6 +157,9 @@ function EvidenceCard({
   shouldLoadPreview: boolean;
   onPreviewSettled: () => void;
   onPress: () => void;
+  onLongPress: () => void;
+  selectable: boolean;
+  selected: boolean;
   cardWidth: string;
 }) {
   const [hasPreviewError, setHasPreviewError] = useState(false);
@@ -166,9 +192,22 @@ function EvidenceCard({
     <Pressable
       accessibilityLabel={`Abrir evidencia ${getEvidenceDisplayName(evidence.nombre)}`}
       accessibilityRole="button"
+      accessibilityState={selectable ? { selected } : undefined}
+      onLongPress={selectable && Platform.OS !== 'web' ? onLongPress : undefined}
       onPress={onPress}
-      style={({ pressed }) => [styles.card, { width: cardWidth }, pressed && styles.cardPressed]}
+      style={({ pressed }) => [styles.card, { width: cardWidth }, selected && styles.cardSelected, pressed && styles.cardPressed]}
     >
+      {selectable && (Platform.OS === 'web' || selected) ? (
+        <Pressable
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: selected }}
+          accessibilityLabel={`${selected ? 'Quitar' : 'Seleccionar'} evidencia ${getEvidenceDisplayName(evidence.nombre)}`}
+          onPress={(event) => { event.stopPropagation(); onLongPress(); }}
+          style={[styles.selectionMark, selected && styles.selectionMarkSelected]}
+        >
+          <Text style={[styles.selectionMarkText, selected && styles.selectionMarkTextSelected]}>{selected ? '✓' : ''}</Text>
+        </Pressable>
+      ) : null}
       <View style={styles.cardPreview}>
         {showThumbnail ? (
           <Image
@@ -847,7 +886,7 @@ function getEvidenceSourceUrl(
   return tareasService.evidenceUrl(taskId, evidence.nombre);
 }
 
-async function downloadEvidenceFile(
+export async function downloadEvidenceFile(
   taskId: number,
   evidence: TaskEvidence,
 ): Promise<ExpoFile> {
@@ -872,7 +911,7 @@ async function downloadEvidenceFile(
   );
 }
 
-async function saveEvidenceToDevice(file: ExpoFile): Promise<void> {
+export async function saveEvidenceToDevice(file: ExpoFile): Promise<void> {
   const isAvailable = await MediaLibrary.isAvailableAsync();
   if (!isAvailable) throw new Error('media-library-unavailable');
 
@@ -895,7 +934,7 @@ async function shareEvidenceFile(
   });
 }
 
-async function runWebEvidenceAction(
+export async function runWebEvidenceAction(
   taskId: number,
   evidence: TaskEvidence,
   action: EvidenceAction,
@@ -1001,8 +1040,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.medium,
     borderWidth: 1,
     overflow: 'hidden',
+    position: 'relative',
     width: '48%',
   },
+  cardSelected: { borderColor: colors.primary, borderWidth: 2 },
+  selectionMark: { alignItems: 'center', backgroundColor: colors.white, borderColor: colors.border, borderRadius: 6, borderWidth: 1, height: 24, justifyContent: 'center', left: 8, position: 'absolute', top: 8, width: 24, zIndex: 3 },
+  selectionMarkSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  selectionMarkText: { color: colors.white, fontSize: 15, fontWeight: '800' },
+  selectionMarkTextSelected: { color: colors.white },
   cardPressed: {
     opacity: 0.82,
   },

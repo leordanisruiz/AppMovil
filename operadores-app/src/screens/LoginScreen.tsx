@@ -16,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import Constants from 'expo-constants';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../store/AuthProvider';
 import { colors, radius, spacing, typography } from '../theme';
@@ -145,6 +146,7 @@ export function LoginScreen({ navigation }: LoginScreenProps) {
             </View>
 
             <Text style={styles.footer}>Acceso exclusivo para personal autorizado</Text>
+            <Text style={styles.version}>v{Constants.expoConfig?.version ?? '1.2.6'}</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -574,6 +576,12 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: typography.small,
     marginTop: spacing.large,
+    textAlign: 'center',
+  },
+  version: {
+    color: colors.textMuted,
+    fontSize: typography.overline,
+    marginTop: spacing.xsmall,
     textAlign: 'center',
   },
 });

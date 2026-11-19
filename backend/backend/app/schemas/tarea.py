@@ -27,6 +27,29 @@ class Evidencia(BaseModel):
     duracion_segundos: float | None = Field(default=None, ge=0)
 
 
+class EvidenciaSeleccionada(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tarea_id: int = Field(gt=0)
+    nombre: str = Field(min_length=1, max_length=128)
+
+
+class DescargaEvidenciasSeleccionadasRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidencias: list[EvidenciaSeleccionada] = Field(min_length=2, max_length=100)
+
+    @field_validator("evidencias")
+    @classmethod
+    def evidences_must_be_unique(
+        cls, values: list[EvidenciaSeleccionada]
+    ) -> list[EvidenciaSeleccionada]:
+        keys = {(item.tarea_id, item.nombre) for item in values}
+        if len(keys) != len(values):
+            raise ValueError("Las evidencias seleccionadas no deben repetirse.")
+        return values
+
+
 class TareaResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
