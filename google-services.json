@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "454568113950",
+    "project_id": "portal-operadores-suma",
+    "storage_bucket": "portal-operadores-suma.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:454568113950:android:2e411fe5e76a4631a3fb0f",
+        "android_client_info": {
+          "package_name": "com.sumaaplicaciones.portaloperadores"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBUuB6-NdpaqFjE8MKjDcOIUhbzVgVj7dU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
