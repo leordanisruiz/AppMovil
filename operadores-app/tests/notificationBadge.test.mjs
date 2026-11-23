@@ -4,7 +4,7 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import typescript from 'typescript';
 
-function createService(notifications) {
+function createService(notifications, platform = 'android') {
   const source = readFileSync(new URL('../src/services/notificationService.native.ts', import.meta.url), 'utf8');
   const compiled = typescript.transpile(source, {
     module: typescript.ModuleKind.CommonJS,
@@ -12,9 +12,9 @@ function createService(notifications) {
   });
   const module = { exports: {} };
   const modules = {
-    'react-native': { Platform: { OS: 'android' }, AppState: { currentState: 'active' } },
+    'react-native': { Platform: { OS: platform }, AppState: { currentState: 'active' } },
     'expo-notifications': {
-      AndroidImportance: { HIGH: 4, MAX: 5 },
+      AndroidImportance: { LOW: 2, HIGH: 4, MAX: 5 },
       ...notifications,
     },
     'expo-constants': { default: {} },
@@ -30,16 +30,16 @@ function createService(notifications) {
   return module.exports;
 }
 
-test('no elimina notificaciones de tareas al limpiar el badge Android', async () => {
-  let called = false;
+test('limpia el contador de novedades sin quitar notificaciones de tareas', async () => {
+  let badgeCount;
   const service = createService({
     getPresentedNotificationsAsync: async () => [
       { request: { content: { data: { tipo: 'tarea' } } } },
     ],
-    setBadgeCountAsync: async () => { called = true; return true; },
+    setBadgeCountAsync: async (value) => { badgeCount = value; return true; },
   });
-  await assert.rejects(service.syncAppBadge(0), /otras notificaciones/);
-  assert.equal(called, false);
+  await service.syncAppBadge(0);
+  assert.equal(badgeCount, 0);
 });
 
 test('limpia el badge cuando solo hay avisos de novedades', async () => {
@@ -55,6 +55,6 @@ test('limpia el badge cuando solo hay avisos de novedades', async () => {
 });
 
 test('informa si el launcher rechaza actualizar el badge', async () => {
-  const service = createService({ setBadgeCountAsync: async () => false });
+  const service = createService({ setBadgeCountAsync: async () => false }, 'ios');
   await assert.rejects(service.syncAppBadge(3), /lanzador/);
 });

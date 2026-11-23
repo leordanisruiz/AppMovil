@@ -5,7 +5,11 @@ import Constants from 'expo-constants';
 import type { TaskNotificationDestination } from './notificationService';
 
 export const NOVELTY_CHANNEL_ID = 'novedades';
+export const NOVELTY_BADGE_CHANNEL_ID = 'novedades-pendientes';
 export const TASK_CHANNEL_ID = 'tareas';
+const NOVELTY_BADGE_SOURCE = 'novelty-badge-summary';
+
+let badgeSyncQueue: Promise<void> = Promise.resolve();
 
 export function areNativeNotificationsAvailable(): boolean {
   const isExpoGo =
@@ -35,6 +39,13 @@ const ANDROID_CHANNELS: AndroidChannel[] = [
     lightColor: '#FF0000',
   },
   {
+    id: NOVELTY_BADGE_CHANNEL_ID,
+    name: 'Novedades pendientes',
+    importance: AndroidImportance.LOW,
+    vibrationPattern: [],
+    lightColor: '#FF0000',
+  },
+  {
     id: TASK_CHANNEL_ID,
     name: 'Tareas asignadas',
     importance: AndroidImportance.MAX,
@@ -47,6 +58,14 @@ if (typeof Notifications.setNotificationHandler === 'function') {
   Notifications.setNotificationHandler({
     handleNotification: async (notification) => {
       const data = notification.request.content.data;
+      if (data?.source === NOVELTY_BADGE_SOURCE) {
+        return {
+          shouldPlaySound: false,
+          shouldSetBadge: false,
+          shouldShowBanner: false,
+          shouldShowList: true,
+        };
+      }
       const isForegroundFallback =
         data?.source === 'foreground-poll' ||
         data?.tipo === 'tarea' ||
@@ -91,16 +110,80 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return requestedPermissions.granted;
 }
 
-export async function syncAppBadge(pendingCount: number): Promise<void> {
+export function syncAppBadge(pendingCount: number): Promise<void> {
+  const count = Math.max(0, Math.floor(pendingCount));
+  const operation = badgeSyncQueue.then(() => applyAppBadge(count));
+  badgeSyncQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+async function applyAppBadge(pendingCount: number): Promise<void> {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
 
   if (typeof Notifications.setBadgeCountAsync !== 'function') {
     throw new Error('El dispositivo no permite actualizar el contador de la aplicación.');
   }
-  const updated = await Notifications.setBadgeCountAsync(Math.max(0, pendingCount));
+  const updated = await Notifications.setBadgeCountAsync(pendingCount);
+  if (Platform.OS === 'android') {
+    await syncAndroidNoveltyBadge(pendingCount);
+    return;
+  }
   if (!updated) {
     throw new Error('El lanzador no admite actualizar el contador de la aplicación.');
   }
+}
+
+async function syncAndroidNoveltyBadge(pendingCount: number): Promise<void> {
+  if (pendingCount > 0) {
+    await Notifications.setNotificationChannelAsync(NOVELTY_BADGE_CHANNEL_ID, {
+      name: 'Novedades pendientes',
+      importance: AndroidImportance.LOW,
+      vibrationPattern: [],
+      lightColor: '#FF0000',
+      showBadge: true,
+    });
+  }
+
+  const presented = await Notifications.getPresentedNotificationsAsync();
+  const summary = presented.find(
+    (notification) => notification.request.content.data?.source === NOVELTY_BADGE_SOURCE,
+  );
+
+  if (pendingCount === 0) {
+    if (summary) {
+      await Notifications.dismissNotificationAsync(summary.request.identifier);
+    }
+    return;
+  }
+
+  const existingCount = summary?.request.content.data?.pendingCount;
+  if (summary && existingCount === pendingCount) return;
+  if (summary) {
+    await Notifications.dismissNotificationAsync(summary.request.identifier);
+  }
+
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: 'Novedades pendientes',
+      body: pendingCount === 1
+        ? 'Tienes 1 novedad asignada por resolver.'
+        : `Tienes ${pendingCount} novedades asignadas por resolver.`,
+      data: {
+        tipo: 'novedad',
+        source: NOVELTY_BADGE_SOURCE,
+        pendingCount,
+      },
+      badge: pendingCount,
+      sticky: true,
+      autoDismiss: false,
+      sound: false,
+    },
+    trigger: { channelId: NOVELTY_BADGE_CHANNEL_ID },
+  });
+
+  // A notification replacement can make some launchers recalculate its badge.
+  // Reapply the authoritative count after the sticky summary is presented.
+  await Notifications.setBadgeCountAsync(pendingCount);
 }
 
 export async function getExpoPushToken(): Promise<string | null> {
