@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
-import { isAxiosError } from 'axios';
 import Constants from 'expo-constants';
 import {
   ActivityIndicator,
@@ -184,15 +183,10 @@ export function HomeScreen() {
       await registerDeviceForPushNotifications();
       setPushError(null);
     } catch (error: unknown) {
-      if (isAxiosError(error) && error.response?.status === 401) return;
-      console.error(
-        'No se pudo registrar el dispositivo para push:',
-        isAxiosError(error) ? `HTTP ${error.response?.status ?? 'sin respuesta'}` : 'error del dispositivo',
-      );
       setPushError(
-        !isAxiosError(error) && error instanceof Error
+        error instanceof Error
           ? error.message
-          : 'No se pudieron activar las notificaciones. Comprueba tu conexión e inténtalo de nuevo.',
+          : 'No se pudieron activar las notificaciones. Revisa la conexión e inténtalo de nuevo.',
       );
     } finally {
       registeringPush.current = false;

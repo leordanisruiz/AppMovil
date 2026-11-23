@@ -1,12 +1,17 @@
 import { Platform } from 'react-native';
-import { isRunningInExpoGo } from 'expo';
+import Constants from 'expo-constants';
 
 export type TaskNotificationDestination = 'asignadas' | 'creadas';
 
 export function areNativeNotificationsAvailable(): boolean {
-  // expo-notifications 58.1.6 can crash on import in Expo Go for Android
-  // because Expo Go does not register ExpoTopicSubscriptionModule.
-  return !(Platform.OS === 'android' && isRunningInExpoGo());
+  const isExpoGo =
+    Constants.appOwnership === 'expo' ||
+    (Constants.executionEnvironment === 'storeClient' &&
+      typeof Constants.expoVersion === 'string');
+
+  // Remote push is unavailable in Expo Go on Android; keep this check free of
+  // native Expo Go module calls so it also works in standalone APKs.
+  return !(Platform.OS === 'android' && isExpoGo);
 }
 
 export async function requestNotificationPermission(): Promise<boolean> {

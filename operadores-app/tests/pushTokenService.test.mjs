@@ -13,6 +13,7 @@ function createService(httpClient, tokenStorage) {
   const module = { exports: {} };
   const modules = {
     'react-native': { Platform: { OS: 'android' } },
+    axios: { isAxiosError: (error) => error?.isAxiosError === true },
     '../api/httpClient': { httpClient },
     './notificationService': {
       areNativeNotificationsAvailable: () => true,

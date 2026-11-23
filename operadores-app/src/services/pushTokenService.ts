@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { isAxiosError } from 'axios';
 import { httpClient } from '../api/httpClient';
 import {
   areNativeNotificationsAvailable,
@@ -12,45 +13,80 @@ type RegisterPushTokenResponse = {
 };
 
 export async function registerDeviceForPushNotifications(): Promise<boolean> {
-  if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
-    return false;
-  }
-  if (!areNativeNotificationsAvailable()) {
-    throw new Error('Las notificaciones remotas requieren la aplicación instalada, no Expo Go.');
-  }
+  let stage = 'validar la plataforma';
 
-  const permissionGranted = await requestNotificationPermission();
-  if (!permissionGranted) {
-    throw new Error(
-      'Permite las notificaciones en los ajustes del dispositivo para recibir avisos de novedades y tareas.',
+  try {
+    if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
+      return false;
+    }
+    stage = 'validar disponibilidad de notificaciones nativas';
+    if (!areNativeNotificationsAvailable()) {
+      throw new Error('Las notificaciones remotas requieren la aplicación instalada, no Expo Go.');
+    }
+
+    stage = 'solicitar permiso y preparar canales';
+    const permissionGranted = await requestNotificationPermission();
+    if (!permissionGranted) {
+      throw new Error(
+        'Permite las notificaciones en los ajustes del dispositivo para recibir avisos de novedades y tareas.',
+      );
+    }
+
+    stage = 'obtener el token de Expo';
+    const pushToken = await getExpoPushToken();
+    if (!pushToken) {
+      throw new Error('Expo no devolvió un token para este dispositivo.');
+    }
+
+    stage = 'leer el token previamente guardado';
+    const previousToken = await tokenStorage.getPushToken();
+
+    stage = 'enviar el token al backend';
+    const response = await httpClient.post<RegisterPushTokenResponse>(
+      '/novedades/push-tokens',
+      {
+        expo_push_token: pushToken,
+        plataforma: Platform.OS,
+      },
     );
-  }
 
-  const pushToken = await getExpoPushToken();
-  if (!pushToken) {
-    throw new Error('No se pudo obtener el token de notificaciones del dispositivo.');
-  }
-  const previousToken = await tokenStorage.getPushToken();
+    stage = 'validar la respuesta del backend';
+    if (!response.data.registrado) {
+      throw new Error('El backend no confirmó el registro del dispositivo.');
+    }
 
-  const response = await httpClient.post<RegisterPushTokenResponse>(
-    '/novedades/push-tokens',
-    {
-      expo_push_token: pushToken,
-      plataforma: Platform.OS,
-    },
-  );
+    if (previousToken && previousToken !== pushToken) {
+      stage = 'desactivar el token anterior';
+      await httpClient.delete('/novedades/push-tokens', {
+        data: { expo_push_token: previousToken },
+      });
+    }
 
-  if (!response.data.registrado) {
-    throw new Error('El backend no confirmó el registro del dispositivo.');
-  }
+    stage = 'guardar el token localmente';
+    await tokenStorage.savePushToken(pushToken);
+    console.info('[push] Registro completado.');
+    return true;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = isAxiosError(error) ? error.response?.status : undefined;
+    const responseDetail = isAxiosError(error)
+      ? error.response?.data?.detail
+      : undefined;
+    const detail = typeof responseDetail === 'string'
+      ? `HTTP ${status ?? 'sin estado'}: ${responseDetail}`
+      : status
+        ? `HTTP ${status}: ${message}`
+        : message;
 
-  if (previousToken && previousToken !== pushToken) {
-    await httpClient.delete('/novedades/push-tokens', {
-      data: { expo_push_token: previousToken },
+    // Never log the Expo token or Axios request config; both can contain credentials.
+    console.error(`[push] Fallo en etapa "${stage}".`, {
+      name: error instanceof Error ? error.name : typeof error,
+      message,
+      status,
+      stack: error instanceof Error ? error.stack : undefined,
     });
+    throw new Error(`Registro push detenido al ${stage}: ${detail}`);
   }
-  await tokenStorage.savePushToken(pushToken);
-  return true;
 }
 
 export async function deactivateDevicePushNotifications(): Promise<void> {

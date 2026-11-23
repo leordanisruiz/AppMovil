@@ -7,6 +7,17 @@ import type { TaskNotificationDestination } from './notificationService';
 export const NOVELTY_CHANNEL_ID = 'novedades';
 export const TASK_CHANNEL_ID = 'tareas';
 
+export function areNativeNotificationsAvailable(): boolean {
+  const isExpoGo =
+    Constants.appOwnership === 'expo' ||
+    (Constants.executionEnvironment === 'storeClient' &&
+      typeof Constants.expoVersion === 'string');
+
+  // Android Expo Go cannot register remote push tokens; standalone and
+  // development builds have the native modules required by this service.
+  return !(Platform.OS === 'android' && isExpoGo);
+}
+
 type AndroidChannel = {
   id: string;
   name: string;
