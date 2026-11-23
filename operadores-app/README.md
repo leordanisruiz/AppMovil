@@ -1,12 +1,27 @@
-# AppMovil
+# Operadores App
 
-Monorepo for the AppMovil backend API and operator mobile application.
+Aplicación Expo/React Native para Android, iOS y web.
 
-## Projects
+## Desarrollo
 
-- [`backend/backend/`](./backend/backend/): FastAPI service and push-notification worker. See [`backend/backend/README.md`](./backend/backend/README.md) for setup, environment variables, API contracts, and deployment details.
-- [`operadores-app/`](./operadores-app/): Expo React Native application for operators.
+```bash
+npm ci
+npx expo start
+```
 
-Local environment files, credentials, dependency directories, and generated build output are excluded from version control.
+## APK con EAS
 
-Prueba GitHub Actions
+Ejecuta desde esta carpeta:
+
+```bash
+npx eas-cli@latest build --platform android --profile preview
+```
+
+La URL del backend se configura con `EXPO_PUBLIC_API_URL` en `.env` para el
+desarrollo local y en el entorno `preview` de EAS para las compilaciones.
+
+## Frontend web en Docker
+
+El `Dockerfile` de esta carpeta exporta el sitio web y lo sirve con Nginx. El
+`docker-compose.yml` de la raíz del repositorio lo construye junto con la API y
+el worker de notificaciones.

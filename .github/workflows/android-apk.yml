@@ -17,7 +17,8 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install
+        working-directory: operadores-app
+        run: npm ci
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -25,15 +26,13 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Install Expo CLI
-        run: npm install -g expo-cli
-
       - name: Generate Android project
-        run: npx expo prebuild --clean
+        working-directory: operadores-app
+        run: npx expo prebuild --platform android --clean
 
       - name: Build APK
         run: |
-          cd android
+          cd operadores-app/android
           chmod +x gradlew
           ./gradlew assembleRelease
 
@@ -41,4 +40,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-release
-          path: android/app/build/outputs/apk/release/*.apk
+          path: operadores-app/android/app/build/outputs/apk/release/*.apk
