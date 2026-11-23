@@ -63,6 +63,8 @@ services:
   frontend:
     build:
       context: ./operadores-app
+      args:
+        EXPO_PUBLIC_API_URL: ${EXPO_PUBLIC_API_URL:-https://portaloperadores.sumasas.com.co/api/v1}
 
     container_name: appmovil-frontend
 
