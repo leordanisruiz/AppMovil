@@ -7,18 +7,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: operadores-app
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install dependencies
+        run: npm install
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -26,14 +25,8 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Install dependencies
-        run: npm install
-
       - name: Install Expo CLI
         run: npm install -g expo-cli
-
-      - name: Validate Expo dependencies
-        run: npx expo install --fix
 
       - name: Generate Android project
         run: npx expo prebuild --clean
@@ -48,4 +41,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-release
-          path: operadores-app/android/app/build/outputs/apk/release/*.apk
+          path: android/app/build/outputs/apk/release/*.apk

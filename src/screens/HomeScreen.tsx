@@ -1,0 +1,2047 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
+import Constants from 'expo-constants';
+import {
+  ActivityIndicator,
+  Animated,
+  Alert,
+  AppState,
+  Image,
+  Modal,
+  BackHandler,
+  PanResponder,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { queryClient } from '../api/queryClient';
+import { SectionHeading } from '../components/SectionHeading';
+import { TasksSection } from '../components/TasksSection';
+import { TaskAssignmentSection } from '../components/TaskAssignmentSection';
+import { CreatedTasksSection } from '../components/CreatedTasksSection';
+import { useNovedades } from '../hooks/useNovedades';
+import { useTareas } from '../hooks/useTareas';
+import { useTareasResumen } from '../hooks/useTareasResumen';
+import { useTareasCreadas } from '../hooks/useTareasCreadas';
+import {
+  subscribeToNoveltyNavigation,
+  syncAppBadge,
+  type TaskNotificationDestination,
+} from '../services/notificationService';
+import { registerDeviceForPushNotifications } from '../services/pushTokenService';
+import { novedadesService } from '../services/novedadesService';
+import type { CategoriaNovedad, Novedad, NovedadesResumen } from '../types/novedad';
+import { useAuth } from '../store/AuthProvider';
+import { colors, radius, spacing, typography } from '../theme';
+import { getFirstName } from '../utils/formatName';
+import { getHighestIsvSeverity, getIsvSeverity, type IsvSeverity } from '../utils/isvSeverity';
+import { getResponsiveLayout } from '../constants/responsive';
+import { getVisibleMenuItems, openSchedulePage, type MenuItemValue, type PortalSection } from '../constants/navigationMenu';
+import { ResponsiveShell } from '../components/ResponsiveLayouts';
+import { EvidenceLibrarySection } from '../components/EvidenceLibrarySection';
+import type { TaskStatus } from '../types/tarea';
+
+type WelcomeNoticeContent = {
+  title: string;
+  message: string;
+  intro?: string;
+  noveltyCount?: number;
+  taskCount?: number;
+};
+
+const sectionTitles: Record<PortalSection, string> = {
+  inicio: 'Inicio',
+  novedades: 'Novedades',
+  tareas: 'Tareas',
+  'tareas-creadas': 'Tareas creadas',
+  'asignacion-tareas': 'Asignación de tareas',
+  'mis-datos': 'Mis datos',
+  evidencias: 'Evidencias',
+};
+
+const appVersion = Constants.expoConfig?.version ?? '1.2.6';
+const noveltyCategories: { id: CategoriaNovedad; label: string }[] = [
+  { id: 'ico', label: 'ICO' },
+  { id: 'isv', label: 'ISV' },
+  { id: 'inasistencias', label: 'Inasistencias' },
+  { id: 'danos', label: 'Daños operativos' },
+];
+const noveltyIcons: Record<CategoriaNovedad, string> = {
+  ico: '◉',
+  isv: '⚠',
+  inasistencias: '◷',
+  danos: '🚌',
+};
+
+export function HomeScreen() {
+  const { width } = useWindowDimensions();
+  const responsiveLayout = Platform.OS === 'web' ? getResponsiveLayout(width) : 'mobile';
+  const isDesktop = responsiveLayout === 'desktop';
+  const isTablet = responsiveLayout === 'tablet';
+  const { operator, logout } = useAuth();
+  const navigation = useNavigation();
+  const operatorCode = operator?.codigo?.trim() || null;
+  const canAssignTasks = operator?.rolId === 1 || operator?.rolId === 2;
+  const canViewNovelties = Boolean(operatorCode) && !canAssignTasks;
+  const canRegisterPush = Boolean(operatorCode) || canAssignTasks;
+  const {
+    data: novedades,
+    isLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useNovedades(canViewNovelties ? operatorCode : null);
+  const isvSeverity = getHighestIsvSeverity(novedades?.categorias.isv.novedades ?? []);
+  const tareasQuery = useTareas(Boolean(operatorCode));
+  const taskCountQuery = useTareasResumen(Boolean(operatorCode));
+  const notClosedTaskCount = taskCountQuery.data ?? tareasQuery.data?.filter(
+    (task) => !['CERRADA', 'CERRADO'].includes(task.estado.trim().toUpperCase()),
+  ).length;
+  const createdTasksQuery = useTareasCreadas(canAssignTasks);
+  const pendingTaskCount = tareasQuery.data?.filter(
+    (task) => task.estado === 'PENDIENTE' || task.estado === 'EN_PROCESO',
+  ).length ?? 0;
+  const [isWelcomeNoticeDismissed, setIsWelcomeNoticeDismissed] = useState(false);
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [pushError, setPushError] = useState<string | null>(null);
+  const registeringPush = useRef(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<PortalSection>('inicio');
+  const [noveltyCategory, setNoveltyCategory] = useState<CategoriaNovedad | null>(null);
+  const [taskInitialFilter, setTaskInitialFilter] = useState<'TODAS' | TaskStatus>('TODAS');
+  const backSwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          gesture.x0 <= 28 && gesture.dx >= 36 && Math.abs(gesture.dy) < 55,
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx < 92 || Math.abs(gesture.dy) > 70) return;
+          if (isMenuOpen) {
+            setIsMenuOpen(false);
+          } else if (activeSection !== 'inicio') {
+            setActiveSection('inicio');
+          } else if (navigation.canGoBack()) {
+            navigation.goBack();
+          }
+        },
+      }),
+    [activeSection, isMenuOpen, navigation],
+  );
+  const firstName = operator?.nombreCompleto
+    ? getFirstName(operator.nombreCompleto)
+    : 'Operador';
+  const welcomeNotice: WelcomeNoticeContent | null = !canViewNovelties
+    ? {
+        title: 'Bienvenido a la app de SUMA',
+        message: 'Donde encontraras a la mano las soluciones necesarias.',
+      }
+    : !isLoading && novedades && novedades.total > 0
+      ? {
+          title: 'Bienvenido a la app de SUMA para Operadores',
+          intro: 'Le contamos que cuenta con',
+          message:
+            'Por favor, acercarse a Operaciones en el horario de atención: lunes a viernes de 7:00 am a 5:00 pm. Recuerda resolver tus novedades.',
+          noveltyCount: novedades.total,
+          taskCount: notClosedTaskCount,
+        }
+      : !isLoading && novedades?.total === 0
+        ? {
+            title: 'Bienvenido a la app de SUMA para Operadores',
+            intro: 'Le contamos que cuenta con',
+            message: 'No tienes novedades para consultar.',
+            noveltyCount: 0,
+            taskCount: notClosedTaskCount,
+          }
+        : null;
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isMenuOpen) {
+        setIsMenuOpen(false);
+        return true;
+      }
+      if (activeSection !== 'inicio') {
+        setActiveSection('inicio');
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [activeSection, isMenuOpen]);
+
+  const registerPush = useCallback(async () => {
+    if (!canRegisterPush || Platform.OS === 'web' || registeringPush.current) return;
+    registeringPush.current = true;
+    try {
+      await registerDeviceForPushNotifications();
+      setPushError(null);
+    } catch (error: unknown) {
+      setPushError(
+        error instanceof Error
+          ? error.message
+          : 'No se pudieron activar las notificaciones. Revisa la conexión e inténtalo de nuevo.',
+      );
+    } finally {
+      registeringPush.current = false;
+    }
+  }, [canRegisterPush]);
+
+  useEffect(() => {
+    if (!canRegisterPush) return undefined;
+    const frame = requestAnimationFrame(() => void registerPush());
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void registerPush();
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      subscription.remove();
+    };
+  }, [canRegisterPush, registerPush]);
+
+
+  useEffect(() => {
+    if (!canViewNovelties || !novedades) return;
+    const pendingCount = noveltyCategories.reduce(
+      (total, { id }) => total + novedades.categorias[id].novedades.filter((item) => !item.Vista).length,
+      0,
+    );
+
+    void syncAppBadge(pendingCount).catch((error: unknown) => {
+      console.error('No se pudo actualizar el contador del icono:', error);
+    });
+  }, [canViewNovelties, novedades]);
+
+
+  useEffect(() => {
+    const openNovedades = () => {
+      if (!canViewNovelties) return;
+      setNoveltyCategory(null);
+      setActiveSection('novedades');
+      setIsMenuOpen(false);
+    };
+    const refreshHomeData = () => {
+      if (operatorCode) {
+        void queryClient.invalidateQueries({
+          queryKey: ['novedades', operatorCode],
+        });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['tareas'] });
+      void queryClient.invalidateQueries({ queryKey: ['tareas-creadas'] });
+    };
+    const openTasks = (destination: TaskNotificationDestination) => {
+      setActiveSection(destination === 'creadas' ? 'tareas-creadas' : 'tareas');
+      setIsMenuOpen(false);
+    };
+    return subscribeToNoveltyNavigation(
+      openNovedades,
+      refreshHomeData,
+      openTasks,
+    );
+  }, [operatorCode, canViewNovelties]);
+
+  const handleLogout = async () => {
+    setLogoutError(null);
+
+    try {
+      await logout();
+    } catch {
+      setLogoutError('No fue posible cerrar sesión. Inténtalo nuevamente.');
+    }
+  };
+
+  const handlePullToRefresh = async () => {
+    if (isPullRefreshing) return;
+
+    setIsPullRefreshing(true);
+    try {
+      await queryClient.refetchQueries(
+        { type: 'active' },
+        { throwOnError: true },
+      );
+    } catch (error) {
+      console.error('No se pudo actualizar la información del portal:', error);
+    } finally {
+      setIsPullRefreshing(false);
+    }
+  };
+
+  const selectSection = (section: PortalSection) => {
+    if (section === 'tareas' || section === 'tareas-creadas') setTaskInitialFilter('TODAS');
+    setActiveSection(section);
+    setIsMenuOpen(false);
+  };
+
+  const selectMenuItem = (value: MenuItemValue) => {
+    if (value === 'programacion') {
+      setIsMenuOpen(false);
+      void openSchedulePage().catch((error: unknown) => {
+        console.error('No se pudo abrir la programación:', error);
+        const message = 'No fue posible abrir la programación. Inténtalo nuevamente.';
+        if (Platform.OS === 'web') window.alert(message);
+        else Alert.alert('Tu Programación', message);
+      });
+      return;
+    }
+    if (value === 'novedades') setNoveltyCategory(null);
+    selectSection(value);
+  };
+
+  const openTasksWithFilter = (filter: 'TODAS' | TaskStatus) => {
+    setTaskInitialFilter(filter);
+    setActiveSection(canAssignTasks ? 'tareas-creadas' : 'tareas');
+    setIsMenuOpen(false);
+  };
+
+  const visibleMenuItems = getVisibleMenuItems(canAssignTasks, canViewNovelties);
+  const dashboardTasks = canAssignTasks ? createdTasksQuery.data : tareasQuery.data;
+  const activeSectionTitle = activeSection === 'novedades' && noveltyCategory
+    ? noveltyCategories.find((item) => item.id === noveltyCategory)?.label ?? 'Novedades'
+    : sectionTitles[activeSection];
+
+  return (
+    <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+      <ResponsiveShell
+        activeSection={activeSection}
+        appVersion={appVersion}
+        desktop={isDesktop}
+        items={visibleMenuItems}
+        onLogout={handleLogout}
+        onSelect={(section) => selectMenuItem(section as MenuItemValue)}
+        operatorName={operator?.nombreCompleto ?? 'Operador'}
+        tablet={isTablet}
+        title={activeSectionTitle}
+      >
+      <View style={[styles.appShell, isDesktop && styles.desktopShell]} {...(isDesktop ? {} : backSwipe.panHandlers)}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={
+            Platform.OS === 'web' ? undefined : (
+              <RefreshControl
+                onRefresh={() => void handlePullToRefresh()}
+                refreshing={isPullRefreshing}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+              />
+            )
+          }
+          showsVerticalScrollIndicator={Platform.OS === 'web'}
+        >
+          <View style={[styles.topBar, isDesktop && styles.desktopHidden]}>
+            <Pressable
+              accessibilityLabel="Abrir menú de navegación"
+              accessibilityRole="button"
+              onPress={() => {
+                if (Platform.OS === 'web') setIsWelcomeNoticeDismissed(true);
+                setIsMenuOpen(true);
+              }}
+              style={styles.menuButton}
+            >
+              <Text style={styles.menuButtonText}>☰</Text>
+            </Pressable>
+
+            <View style={styles.brandLockup}>
+              <Image
+                accessibilityLabel="Logo corporativo"
+                resizeMode="contain"
+                source={require('../../assets/brand-symbol.png')}
+                style={styles.brandLogo}
+              />
+              <View>
+                <Text style={styles.brandName}>Portal Operadores</Text>
+                <Text style={styles.brandCaption}>SUMA · OPERACIÓN</Text>
+              </View>
+            </View>
+
+          </View>
+
+          <View style={[styles.pageHeading, isDesktop && styles.desktopHidden]}>
+            <Text style={styles.pageEyebrow}>PORTAL DEL OPERADOR</Text>
+            <Text style={styles.pageTitle}>{activeSectionTitle}</Text>
+          </View>
+
+          {pushError ? (
+            <View style={styles.feedbackCard}>
+              <Text style={styles.feedbackText}>{pushError}</Text>
+              <Pressable accessibilityRole="button" onPress={() => void registerPush()}>
+                <Text style={styles.noveltyModalCloseText}>Reintentar notificaciones</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <Modal
+            animationType="fade"
+            onRequestClose={() => setIsWelcomeNoticeDismissed(true)}
+            statusBarTranslucent
+            transparent
+            visible={welcomeNotice !== null && !isWelcomeNoticeDismissed}
+          >
+            <View style={styles.welcomeModalBackdrop}>
+              <View style={styles.welcomeNotice}>
+                <View style={styles.welcomeNoticeAccent} />
+                <View style={styles.welcomeNoticeHeader}>
+                  <View style={styles.welcomeNoticeIcon}>
+                    <Text style={styles.welcomeNoticeIconText}>!</Text>
+                  </View>
+                  <Pressable
+                    accessibilityLabel="Cerrar mensaje de bienvenida"
+                    accessibilityRole="button"
+                    onPress={() => setIsWelcomeNoticeDismissed(true)}
+                    style={styles.welcomeNoticeClose}
+                  >
+                    <Text style={styles.welcomeNoticeCloseText}>×</Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.welcomeNoticeEyebrow}>MENSAJE DE BIENVENIDA</Text>
+                <Text style={styles.welcomeNoticeTitle}>{welcomeNotice?.title}</Text>
+                {welcomeNotice?.intro ? (
+                  <Text style={styles.welcomeNoticeText}>{welcomeNotice.intro}</Text>
+                ) : null}
+                {welcomeNotice?.noveltyCount !== undefined && novedades ? (
+                  <Text style={styles.welcomeNoticeText}>
+                    {noveltyCategories.map(({ id, label }) => `${novedades.categorias[id].total} ${label}`).join('  ·  ')}
+                  </Text>
+                ) : null}
+                {welcomeNotice?.noveltyCount !== undefined ||
+                welcomeNotice?.taskCount !== undefined ? (
+                  <View style={styles.welcomeNoticeCounts}>
+                    {welcomeNotice.noveltyCount !== undefined ? (
+                      <View style={styles.welcomeNoticeCount}>
+                        <Text style={styles.welcomeNoticeCountNumber}>{welcomeNotice.noveltyCount}</Text>
+                        <Text style={styles.welcomeNoticeCountLabel}>
+                          {welcomeNotice.noveltyCount === 1 ? 'Novedad' : 'Novedades'}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {welcomeNotice.taskCount !== undefined ? (
+                      <View style={styles.welcomeNoticeCount}>
+                        <Text style={styles.welcomeNoticeCountNumber}>
+                          {welcomeNotice.taskCount}
+                        </Text>
+                        <Text style={styles.welcomeNoticeCountLabel}>
+                          {welcomeNotice.taskCount === 1
+                            ? 'Tarea asignada'
+                            : 'Tareas asignadas'}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+                <Text style={styles.welcomeNoticeText}>
+                  {welcomeNotice?.message}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setIsWelcomeNoticeDismissed(true)}
+                  style={styles.welcomeNoticeButton}
+                >
+                  <Text style={styles.welcomeNoticeButtonText}>
+                    Entendido, continuar
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </Modal>
+
+          {activeSection === 'inicio' ? (
+            <View style={styles.sectionContent}>
+              {isDesktop ? (
+                <DesktopDashboard
+                  firstName={firstName}
+                  pending={dashboardTasks?.filter((task) => task.estado === 'PENDIENTE').length ?? 0}
+                  inProgress={dashboardTasks?.filter((task) => task.estado === 'EN_PROCESO').length ?? 0}
+                  completed={dashboardTasks?.filter((task) => task.estado === 'COMPLETADA').length ?? 0}
+                  novelties={novedades}
+                  showNovelties={canViewNovelties}
+                  evidenceCount={dashboardTasks?.reduce((sum, task) => sum + task.evidencias.length, 0) ?? 0}
+                  closed={dashboardTasks?.filter((task) => task.estado === 'CERRADO').length ?? 0}
+                  onTasks={openTasksWithFilter}
+                  onNovelties={(category) => { setNoveltyCategory(category); selectSection('novedades'); }}
+                  onEvidence={() => selectSection('evidencias')}
+                  loading={(canAssignTasks ? createdTasksQuery.isLoading : tareasQuery.isLoading) || isLoading}
+                />
+              ) : null}
+              {!isDesktop ? <View style={styles.welcomeCard}>
+                <View style={styles.welcomeAccent} />
+                <Text style={styles.welcomeEyebrow}>BIENVENIDO</Text>
+                <Text style={styles.welcomeTitle}>Hola, {firstName}</Text>
+                <Text style={styles.welcomeCopy}>
+                  Tu información y las novedades de la operación, siempre a la mano.
+                </Text>
+                <View style={styles.operatorBadge}>
+                  <Text style={styles.operatorBadgeText}>
+                    IDENTIFICACIÓN  ·  {operator?.identificacion ?? '—'}
+                  </Text>
+                </View>
+              </View> : null}
+
+              {!isDesktop ? <SectionHeading
+                title="Resumen de operación"
+                supportingText="Consulta rápidamente tu información más importante."
+              /> : null}
+              {!isDesktop ? <View style={styles.summaryRow}>
+                {canAssignTasks ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => selectSection('tareas-creadas')}
+                    style={styles.summaryCard}
+                  >
+                    <View style={styles.summaryIcon}>
+                      <Text style={styles.summaryIconText}>▤</Text>
+                    </View>
+                    <Text style={styles.summaryLabel}>Tareas creadas</Text>
+                    <Text style={styles.summaryValue}>
+                      {createdTasksQuery.data?.length ?? '—'}
+                    </Text>
+                    <Text style={styles.summaryFootnote}>
+                      Seguimiento de asignaciones
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <>
+                    {operatorCode ? noveltyCategories.map(({ id, label }) => (
+                      <Pressable key={id} accessibilityRole="button"
+                        onPress={() => { setNoveltyCategory(id); selectSection('novedades'); }}
+                        style={styles.summaryCard}>
+                        <View style={styles.summaryIcon}><Text style={styles.summaryIconText}>{noveltyIcons[id]}</Text></View>
+                        {id === 'isv' && isvSeverity ? <IsvAlertBell severity={isvSeverity} /> : null}
+                        <Text style={styles.summaryLabel}>{label}</Text>
+                        <Text style={styles.summaryValue}>{categoryCount(novedades, id)}</Text>
+                        <Text style={styles.summaryFootnote}>Ver avisos</Text>
+                      </Pressable>
+                    )) : null}
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => selectSection('tareas')}
+                      style={styles.summaryCard}
+                    >
+                      <View style={styles.summaryIcon}>
+                        <Text style={styles.summaryIconText}>☑</Text>
+                      </View>
+                      <Text style={styles.summaryLabel}>Tareas</Text>
+                      <Text style={styles.summaryValue}>
+                        {tareasQuery.isLoading ? '—' : pendingTaskCount}
+                      </Text>
+                      <Text style={styles.summaryFootnote}>
+                        Actividades asignadas
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
+              </View> : null}
+
+              {!isDesktop ? <Pressable
+                accessibilityRole="button"
+                onPress={() => selectSection('mis-datos')}
+                style={styles.profileShortcut}
+              >
+                <View style={styles.profileShortcutMark}>
+                  <Text style={styles.profileShortcutInitial}>
+                    {firstName.slice(0, 1).toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.profileShortcutCopy}>
+                  <Text style={styles.profileShortcutTitle}>
+                    {operator?.nombreCompleto ?? 'Consulta tus datos'}
+                  </Text>
+                  <Text style={styles.profileShortcutCaption}>
+                    Revisar información del perfil
+                  </Text>
+                </View>
+                <Text style={styles.profileShortcutArrow}>›</Text>
+              </Pressable> : null}
+            </View>
+          ) : null}
+
+          {activeSection === 'novedades' && canViewNovelties ? (
+            <View style={styles.sectionContent}>
+              <SectionHeading
+                supportingText="Información importante para tu operación."
+              />
+              {!noveltyCategory ? <View style={styles.summaryRow}>
+                {noveltyCategories.map(({ id, label }) => (
+                  <Pressable key={id} accessibilityRole="button" onPress={() => setNoveltyCategory(id)} style={styles.summaryCard}>
+                    <View style={styles.summaryIcon}><Text style={styles.summaryIconText}>{noveltyIcons[id]}</Text></View>
+                    {id === 'isv' && isvSeverity ? <IsvAlertBell severity={isvSeverity} /> : null}
+                    <Text style={styles.summaryLabel}>{label}</Text>
+                    <Text style={styles.summaryValue}>{categoryCount(novedades, id)}</Text>
+                  </Pressable>
+                ))}
+              </View> : null}
+              <View style={styles.newsOverview}>
+                <View>
+                  <Text style={styles.newsOverviewLabel}>
+                    {noveltyCategory ? activeSectionTitle.toUpperCase() : 'NOVEDADES ABIERTAS'}
+                  </Text>
+                  <Text style={styles.newsOverviewCount}>
+                    {noveltyCategory ? categoryCount(novedades, noveltyCategory) : novedades?.total ?? '—'}
+                  </Text>
+                </View>
+              </View>
+
+              {!operatorCode ? (
+                <NovedadesNoAplica />
+              ) : isLoading ? (
+                <ActivityIndicator color={colors.primary} style={styles.feedback} />
+              ) : isError ? (
+                <View style={styles.feedbackCard}>
+                  <Text style={styles.feedbackText}>
+                    No fue posible cargar las novedades.
+                  </Text>
+                  <Pressable accessibilityRole="button" onPress={() => void refetch()}>
+                    <Text style={styles.retryText}>Reintentar</Text>
+                  </Pressable>
+                </View>
+              ) : !noveltyCategory ? (
+                <View style={styles.feedbackCard}><Text style={styles.feedbackText}>Selecciona una categoría para consultar sus novedades.</Text></View>
+              ) : operatorCode && novedades?.categorias[noveltyCategory].novedades.length ? (
+                <NovedadesTable key={noveltyCategory} rows={novedades.categorias[noveltyCategory].novedades} category={noveltyCategory} operatorCode={operatorCode} />
+              ) : (
+                <View style={styles.feedbackCard}>
+                  <Text style={styles.emptyTitle}>Todo al día</Text>
+                  <Text style={styles.feedbackText}>
+                    No tienes novedades abiertas para consultar.
+                  </Text>
+                </View>
+              )}
+              {isRefetching ? <ActivityIndicator color={colors.primary} /> : null}
+            </View>
+          ) : null}
+
+          {activeSection === 'mis-datos' ? (
+            <View style={styles.sectionContent}>
+              <View style={styles.profileHero}>
+                <View style={styles.profileAvatar}>
+                  <Text style={styles.profileAvatarInitial}>
+                    {firstName.slice(0, 1).toUpperCase()}
+                  </Text>
+                </View>
+                <Text style={styles.profileHeroName}>
+                  {operator?.nombreCompleto ?? 'Operador'}
+                </Text>
+                <Text style={styles.profileHeroRole}>
+                  {operator?.cargo ?? 'Cargo no disponible'}
+                </Text>
+              </View>
+              <View style={styles.profileCard}>
+                <SectionHeading
+                  title="Información personal"
+                  supportingText="Datos asociados a tu perfil corporativo."
+                />
+                <ProfileRow label="Código" value={operator?.codigo ?? '—'} />
+                <ProfileRow
+                  label="Tipo de documento"
+                  value={operator?.tipoDocumento ?? '—'}
+                />
+                <ProfileRow
+                  label="Identificación"
+                  value={operator?.identificacion ?? '—'}
+                />
+                <ProfileRow
+                  label="Nombre completo"
+                  value={operator?.nombreCompleto ?? '—'}
+                />
+                <ProfileRow
+                  label="Fecha de ingreso"
+                  value={operator?.fechaIngreso ?? '—'}
+                />
+                <ProfileRow label="Cargo" value={operator?.cargo ?? '—'} />
+                <View style={styles.profileRow}>
+                  <Text style={styles.profileLabel}>Estado del empleado</Text>
+                  <Text
+                    style={[
+                      styles.profileValue,
+                      operator?.estadoEmpleado === 'A'
+                        ? styles.profileStatus
+                        : styles.profileInactiveStatus,
+                    ]}
+                  >
+                    {operator?.estadoEmpleado === 'A'
+                      ? 'Activo (A)'
+                      : `${operator?.estadoEmpleado ?? '—'}`}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ) : null}
+
+          {activeSection === 'tareas' && !canAssignTasks ? (
+            <TasksSection initialStatusFilter={taskInitialFilter} operatorCode={operatorCode} />
+          ) : null}
+          {activeSection === 'tareas-creadas' && canAssignTasks ? (
+            <CreatedTasksSection initialStatusFilter={taskInitialFilter} />
+          ) : null}
+          {activeSection === 'evidencias' ? <EvidenceLibrarySection operatorCode={operatorCode} /> : null}
+          {activeSection === 'asignacion-tareas' && canAssignTasks ? (
+            <TaskAssignmentSection />
+          ) : null}
+
+          {logoutError ? <Text style={styles.logoutError}>{logoutError}</Text> : null}
+          <Text style={styles.footer}>Portal Operadores · Uso corporativo</Text>
+        </ScrollView>
+
+        {isMenuOpen && !isDesktop ? (
+          <>
+            <Pressable
+              accessibilityLabel="Cerrar menú"
+              accessibilityRole="button"
+              onPress={() => setIsMenuOpen(false)}
+              style={styles.backdrop}
+            />
+            <ScrollView
+              style={[
+                styles.sidebar,
+                Platform.OS === 'web' && styles.sidebarWeb,
+              ]}
+              contentContainerStyle={styles.sidebarContent}
+              showsVerticalScrollIndicator={Platform.OS === 'web'}
+            >
+              <View style={styles.sidebarHeader}>
+                <Image
+                  accessibilityLabel="Logo corporativo"
+                  resizeMode="contain"
+                  source={require('../../assets/brand-logo.png')}
+                  style={styles.sidebarLogo}
+                />
+                <View>
+                  <Text style={styles.sidebarTitle}>Portal Operadores</Text>
+                  <Text style={styles.sidebarCaption}>MENÚ PRINCIPAL</Text>
+                </View>
+              </View>
+
+              <Text style={styles.menuSectionLabel}>NAVEGACIÓN</Text>
+              {visibleMenuItems.map((item) => (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: activeSection === item.value }}
+                  key={item.value}
+                  onPress={() => selectMenuItem(item.value)}
+                  style={[
+                    styles.menuItem,
+                    activeSection === item.value && styles.menuItemActive,
+                  ]}
+                >
+                  <View style={styles.menuItemCopy}>
+                    <View style={styles.menuItemTitleRow}>
+                      {item.icon ? (
+                        <Text
+                          style={[
+                            styles.menuItemIcon,
+                            activeSection === item.value && styles.menuItemTextActive,
+                          ]}
+                        >
+                          {item.icon}
+                        </Text>
+                      ) : null}
+                      <Text
+                        style={[
+                          styles.menuItemText,
+                          activeSection === item.value && styles.menuItemTextActive,
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                    </View>
+                    <Text style={styles.menuItemDescription}>{item.description}</Text>
+                  </View>
+                  {(item.value === 'novedades' && novedades?.total) ||
+                  (item.value === 'tareas' && pendingTaskCount) ? (
+                    <View style={styles.menuBadge}>
+                      <Text style={styles.menuBadgeText}>
+                        {item.value === 'novedades'
+                          ? novedades?.total
+                          : pendingTaskCount}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+                ))}
+
+              <View style={styles.sidebarOperator}>
+                <View style={styles.sidebarAvatar}>
+                  <Text style={styles.sidebarAvatarInitial}>
+                    {firstName.slice(0, 1).toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.sidebarOperatorCopy}>
+                  <Text numberOfLines={1} style={styles.sidebarOperatorName}>
+                    {operator?.nombreCompleto ?? 'Operador'}
+                  </Text>
+                  <Text style={styles.sidebarOperatorCaption}>Sesión activa</Text>
+                  <Text style={styles.sidebarOperatorVersion}>Versión {appVersion}</Text>
+                </View>
+              </View>
+              <Pressable
+                accessibilityLabel="Cerrar sesion"
+                accessibilityRole="button"
+                onPress={handleLogout}
+                style={styles.sidebarLogout}
+              >
+                <View style={styles.sidebarLogoutIconCircle}>
+                  <View style={styles.sidebarLogoutDoor} />
+                  <View style={styles.sidebarLogoutArrowStem} />
+                  <View style={styles.sidebarLogoutArrowHeadTop} />
+                  <View style={styles.sidebarLogoutArrowHeadBottom} />
+                </View>
+                <Text style={styles.sidebarLogoutText}>Cerrar sesión</Text>
+              </Pressable>
+            </ScrollView>
+          </>
+        ) : null}
+      </View>
+      </ResponsiveShell>
+    </SafeAreaView>
+  );
+}
+
+function DesktopDashboard({
+  firstName, pending, inProgress, completed, closed, novelties, showNovelties, evidenceCount, onTasks, onNovelties, onEvidence, loading,
+}: {
+  firstName: string; pending: number; inProgress: number; completed: number; closed: number; novelties: NovedadesResumen | undefined;
+  showNovelties: boolean;
+  evidenceCount: number; onTasks: (filter: 'TODAS' | TaskStatus) => void; onNovelties: (category: CategoriaNovedad) => void; onEvidence: () => void; loading: boolean;
+}) {
+  const noveltyMetrics = noveltyCategories.map(({ id, label }) => ({
+    label, value: categoryCount(novelties, id), icon: noveltyIcons[id], tone: '#FFF0F0', action: () => onNovelties(id),
+    alertSeverity: id === 'isv' ? getHighestIsvSeverity(novelties?.categorias.isv.novedades ?? []) : null,
+  }));
+  const taskMetrics = [
+    { label: 'Tareas pendientes', value: pending, icon: '◷', tone: '#FFF4E5', action: () => onTasks('PENDIENTE') },
+    { label: 'En proceso', value: inProgress, icon: '↻', tone: '#EEF5FF', action: () => onTasks('EN_PROCESO') },
+    { label: 'Completadas', value: completed, icon: '✓', tone: '#EAF7EF', action: () => onTasks('COMPLETADA') },
+    { label: 'Cerradas', value: closed, icon: '✓', tone: '#EEF1F4', action: () => onTasks('CERRADO') },
+    { label: 'Evidencias cargadas', value: evidenceCount, icon: '▧', tone: '#F2EEFF', action: onEvidence },
+  ];
+  return (
+    <View style={styles.dashboard}>
+      <View style={styles.dashboardIntro}><View><Text style={styles.dashboardEyebrow}>PANEL DE CONTROL</Text><Text style={styles.dashboardTitle}>Hola, {firstName}</Text><Text style={styles.dashboardCopy}>Estado actual de tu operación y actividad asignada.</Text></View><View style={styles.dashboardDate}><Text style={styles.dashboardDateLabel}>HOY</Text><Text style={styles.dashboardDateValue}>{new Intl.DateTimeFormat('es-CO', { dateStyle: 'long' }).format(new Date())}</Text></View></View>
+      {(showNovelties ? [noveltyMetrics, taskMetrics] : [taskMetrics]).map((metrics) => (
+        <View key={metrics === noveltyMetrics ? 'novedades' : 'tareas'} style={styles.metricGrid}>
+          {metrics.map((metric) => <Pressable key={metric.label} accessibilityRole="button" onPress={metric.action} style={styles.metricCard}><View style={[styles.metricIcon, { backgroundColor: metric.tone }]}><Text style={styles.metricIconText}>{metric.icon}</Text></View>{'alertSeverity' in metric && metric.alertSeverity ? <IsvAlertBell severity={metric.alertSeverity} /> : null}<Text style={styles.metricLabel}>{metric.label}</Text><Text style={styles.metricValue}>{loading ? '—' : metric.value}</Text><Text style={styles.metricLink}>Ver detalle  ›</Text></Pressable>)}
+        </View>
+      ))}
+      <View style={styles.dashboardHint}><Text style={styles.dashboardHintIcon}>✦</Text><View style={{ flex: 1 }}><Text style={styles.dashboardHintTitle}>Tu espacio de trabajo</Text><Text style={styles.dashboardHintCopy}>Consulta tareas, novedades y evidencias desde el menú lateral.</Text></View></View>
+    </View>
+  );
+}
+
+function ProfileRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.profileRow}>
+      <Text style={styles.profileLabel}>{label}</Text>
+      <Text style={styles.profileValue}>{value}</Text>
+    </View>
+  );
+}
+
+function categoryCount(resumen: NovedadesResumen | undefined, category: CategoriaNovedad): number | string {
+  return resumen?.categorias[category].total ?? '—';
+}
+
+function IsvAlertBell({ severity }: { severity: IsvSeverity }) {
+  const [scale] = useState(() => new Animated.Value(1));
+
+  useEffect(() => {
+    const animation = Animated.loop(Animated.sequence([
+      Animated.timing(scale, {
+        toValue: severity === 'fatalidad' ? 1.15 : 1.07,
+        duration: severity === 'fatalidad' ? 500 : 800,
+        useNativeDriver: true,
+        isInteraction: false,
+      }),
+      Animated.timing(scale, {
+        toValue: 1,
+        duration: severity === 'fatalidad' ? 500 : 800,
+        useNativeDriver: true,
+        isInteraction: false,
+      }),
+    ]));
+    animation.start();
+    return () => animation.stop();
+  }, [scale, severity]);
+
+  return (
+    <Animated.View
+      accessibilityLabel={`Alerta ISV: ${severity}`}
+      style={[
+        styles.isvBell,
+        severity === 'fatalidad' ? styles.isvBellCritical : styles.isvBellWarning,
+        { transform: [{ scale }] },
+      ]}
+    >
+      <View style={styles.isvBellDome} />
+      <View style={styles.isvBellBase} />
+      <View style={styles.isvBellClapper} />
+    </Animated.View>
+  );
+}
+
+function NovedadesTable({ rows, category, operatorCode }: { rows: Novedad[]; category: CategoriaNovedad; operatorCode: string }) {
+  const isIco = category === 'ico';
+  const isDamage = category === 'danos';
+  const isIsv = category === 'isv';
+  const pageSize = 5;
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedNovelty, setSelectedNovelty] = useState<Novedad | null>(null);
+  const [readError, setReadError] = useState(false);
+  const markViewed = async (novelty: Novedad) => {
+    setReadError(false);
+    try {
+      await novedadesService.markViewed(category, novelty.IdNovedad);
+      await queryClient.invalidateQueries({ queryKey: ['novedades', operatorCode] });
+    } catch (error: unknown) {
+      console.error('No se pudo registrar la lectura de la novedad:', error);
+      setReadError(true);
+    }
+  };
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(currentPage, pageCount);
+  const startIndex = (page - 1) * pageSize;
+  const pageRows = rows.slice(startIndex, startIndex + pageSize);
+
+  return (
+    <View style={styles.tableCard}>
+      <View style={styles.tableContainer}>
+        <View style={styles.tableHeaderRow}>
+          <Text style={[styles.tableHeaderCell, styles.idColumn]}>ID</Text>
+          <Text style={[styles.tableHeaderCell, styles.dateColumn]}>Fecha</Text>
+          <Text style={[styles.tableHeaderCell, styles.statusColumn]}>{isIco ? 'Tipo novedad' : 'Estado'}</Text>
+        </View>
+        {pageRows.map((novedad, index) => {
+          const status = (isIco ? novedad.TipoNovedad : novedad.Estado)?.trim() || 'Sin información';
+          const isOpenStatus = /^(ABIERTO|ABIERTA|EN PROCESO|PROCESO)$/i.test(status);
+          const severity = isIsv ? getIsvSeverity(novedad.Subgrupo) : null;
+
+          return (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Ver detalle de la novedad ${novedad.IdNovedad}${severity ? `, ${severity}` : ''}`}
+              key={novedad.IdNovedad}
+              onPress={() => {
+                setSelectedNovelty(novedad);
+                setReadError(false);
+                if (!novedad.Vista) void markViewed(novedad);
+              }}
+              style={[
+                styles.tableRow,
+                index % 2 === 1 && styles.tableRowAlternate,
+                severity === 'lesionado' && styles.isvRowWarning,
+                severity === 'fatalidad' && styles.isvRowCritical,
+              ]}
+            >
+              <Text style={[styles.tableCell, styles.idColumn, styles.idCell]}>
+                {novedad.IdNovedad}
+              </Text>
+              <Text style={[styles.tableCell, styles.dateColumn]}>
+                {formatNoveltyDate(novedad.FechaNovedad)}
+              </Text>
+              <View style={[styles.statusColumn, styles.statusCell]}>
+                <View
+                  style={[
+                    styles.statusPill,
+                    isOpenStatus && styles.statusPillOpen,
+                  ]}
+                >
+                  <View
+                    style={[styles.statusDot, isOpenStatus && styles.statusDotOpen]}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.statusText, isOpenStatus && styles.statusTextOpen]}
+                  >
+                    {status}
+                  </Text>
+                </View>
+              </View>
+            </Pressable>
+          );
+        })}
+        <View style={styles.pagination}>
+          <Text style={styles.paginationSummary}>
+            {startIndex + 1}–{Math.min(startIndex + pageSize, rows.length)} de {rows.length}
+          </Text>
+          <View style={styles.paginationControls}>
+            <Pressable
+              accessibilityLabel="Página anterior"
+              accessibilityRole="button"
+              accessibilityState={{ disabled: page <= 1 }}
+              disabled={page <= 1}
+              onPress={() => setCurrentPage(page - 1)}
+              style={[styles.paginationButton, page <= 1 && styles.paginationButtonDisabled]}
+            >
+              <Text
+                style={[
+                  styles.paginationButtonText,
+                  page <= 1 && styles.paginationButtonTextDisabled,
+                ]}
+              >
+                ‹
+              </Text>
+            </Pressable>
+            <Text style={styles.paginationPage}>
+              {page} / {pageCount}
+            </Text>
+            <Pressable
+              accessibilityLabel="Página siguiente"
+              accessibilityRole="button"
+              accessibilityState={{ disabled: page >= pageCount }}
+              disabled={page >= pageCount}
+              onPress={() => setCurrentPage(page + 1)}
+              style={[
+                styles.paginationButton,
+                page >= pageCount && styles.paginationButtonDisabled,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.paginationButtonText,
+                  page >= pageCount && styles.paginationButtonTextDisabled,
+                ]}
+              >
+                ›
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+      <Modal
+        animationType="slide"
+        onRequestClose={() => setSelectedNovelty(null)}
+        transparent
+        visible={selectedNovelty !== null}
+      >
+        <View style={styles.noveltyModalBackdrop}>
+          <Pressable
+            accessibilityLabel="Cerrar detalle de novedad"
+            accessibilityRole="button"
+            onPress={() => setSelectedNovelty(null)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.noveltyModalCard}>
+            <View style={styles.noveltyModalHandle} />
+            <Text style={styles.noveltyModalTitle}>Detalle de novedad</Text>
+            {readError && selectedNovelty ? (
+              <Pressable accessibilityRole="button" onPress={() => void markViewed(selectedNovelty)}>
+                <Text style={styles.feedbackText}>No se pudo marcar como vista. Toca aquí para reintentar.</Text>
+              </Pressable>
+            ) : null}
+            <ScrollView contentContainerStyle={styles.noveltyModalContent}>
+              {selectedNovelty ? (
+                <>
+                  <NoveltyDetail label="ID Novedad" value={String(selectedNovelty.IdNovedad)} />
+                  <NoveltyDetail label="Fecha Novedad" value={formatNoveltyDate(selectedNovelty.FechaNovedad)} />
+                  {isIsv ? <NoveltyDetail label="Código" value={selectedNovelty.Codigo == null ? null : String(selectedNovelty.Codigo)} /> : null}
+                  {!isIco ? <NoveltyDetail label="Estado" value={selectedNovelty.Estado} /> : null}
+                  <NoveltyDetail label="Tipo Novedad" value={selectedNovelty.TipoNovedad} />
+                  {!isIco ? (
+                    <>
+                      <NoveltyDetail label="Grupo" value={selectedNovelty.Grupo} />
+                      <NoveltyDetail label="Subgrupo" value={selectedNovelty.Subgrupo} />
+                    </>
+                  ) : null}
+                  <NoveltyDetail label="Descripción" value={selectedNovelty.Descripcion} />
+                  {isDamage || isIsv ? <NoveltyDetail label="Vehículo" value={selectedNovelty.Vehiculo} /> : null}
+                  {isDamage || isIsv ? <NoveltyDetail label="Ruta" value={selectedNovelty.Ruta} /> : null}
+                </>
+              ) : null}
+            </ScrollView>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setSelectedNovelty(null)}
+              style={styles.noveltyModalClose}
+            >
+              <Text style={styles.noveltyModalCloseText}>Cerrar</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+function NoveltyDetail({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <View style={styles.noveltyDetailItem}>
+      <Text style={styles.noveltyDetailLabel}>{label}</Text>
+      <Text style={styles.noveltyDetailValue}>{value?.trim() || 'Sin información'}</Text>
+    </View>
+  );
+}
+
+function formatNoveltyDate(value: string | null): string {
+  if (!value) return '—';
+
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (isoDate) {
+    return `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}`;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat('es-CO', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date);
+}
+
+function NovedadesNoAplica() {
+  return (
+    <View style={styles.feedbackCard}>
+      <Text style={styles.emptyTitle}>Novedades no disponibles</Text>
+      <Text style={styles.feedbackText}>
+        Este perfil no tiene un código de operador asociado. No se realiza la
+        consulta de novedades para este usuario.
+      </Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: {
+    backgroundColor: colors.background,
+    flex: 1,
+  },
+  appShell: {
+    flex: 1,
+    minHeight: 0,
+  },
+  desktopShell: {
+    backgroundColor: '#F4F6F8',
+    minHeight: 0,
+    minWidth: 0,
+  },
+  desktopHidden: {
+    display: 'none',
+  },
+  dashboard: { gap: spacing.large, marginBottom: spacing.large },
+  dashboardIntro: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: spacing.large },
+  dashboardEyebrow: { color: colors.primary, fontSize: 10, fontWeight: '800', letterSpacing: 1.3 },
+  dashboardTitle: { color: '#252B31', fontSize: 28, fontWeight: '800', marginTop: 5 },
+  dashboardCopy: { color: '#76808A', fontSize: 13, marginTop: 5 },
+  dashboardDate: { alignItems: 'flex-end', backgroundColor: '#FFFFFF', borderColor: '#E7EAEE', borderRadius: radius.medium, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 11 },
+  dashboardDateLabel: { color: '#929AA4', fontSize: 9, fontWeight: '800', letterSpacing: 1 },
+  dashboardDateValue: { color: '#434B54', fontSize: 12, fontWeight: '700', marginTop: 4 },
+  metricGrid: { flexDirection: 'row', gap: 14 },
+  metricCard: { backgroundColor: '#FFFFFF', borderColor: '#E7EAEE', borderRadius: 13, borderWidth: 1, flex: 1, gap: 8, minWidth: 0, minHeight: 156, padding: 16 },
+  metricIcon: { alignItems: 'center', borderRadius: 10, height: 34, justifyContent: 'center', width: 34 },
+  metricIconText: { color: '#474E57', fontSize: 16, fontWeight: '800' },
+  metricLabel: { color: '#707983', fontSize: 11, fontWeight: '700' },
+  metricValue: { color: '#242B32', fontSize: 26, fontWeight: '800' },
+  metricLink: { color: colors.primary, fontSize: 10, fontWeight: '700' },
+  dashboardHint: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#E7EAEE', borderRadius: 13, borderWidth: 1, flexDirection: 'row', gap: 13, padding: 17 },
+  dashboardHintIcon: { color: colors.primary, fontSize: 22 },
+  dashboardHintTitle: { color: '#343A40', fontSize: 13, fontWeight: '800' },
+  dashboardHintCopy: { color: '#7C858F', fontSize: 11, marginTop: 3 },
+  content: {
+    flexGrow: 1,
+    gap: spacing.large,
+    paddingBottom: spacing.xxlarge,
+    paddingHorizontal: spacing.large,
+    paddingTop: spacing.medium,
+  },
+  topBar: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: 48,
+  },
+  menuButton: {
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    height: 42,
+    justifyContent: 'center',
+    width: 42,
+  },
+  menuButtonText: {
+    color: colors.navy,
+    fontSize: typography.heading,
+    fontWeight: '700',
+  },
+  brandLockup: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.small,
+    justifyContent: 'center',
+    marginHorizontal: spacing.xsmall,
+  },
+  brandLogo: {
+    borderRadius: radius.small,
+    height: 38,
+    width: 38,
+  },
+  brandName: {
+    color: colors.text,
+    fontSize: typography.caption,
+    fontWeight: '700',
+  },
+  brandCaption: {
+    color: colors.textMuted,
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginTop: 2,
+  },
+  pageHeading: {
+    gap: spacing.xsmall,
+    marginTop: spacing.small,
+  },
+  pageEyebrow: {
+    color: colors.primary,
+    fontSize: typography.overline,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+  },
+  pageTitle: {
+    color: colors.text,
+    fontSize: typography.display,
+    fontWeight: '800',
+  },
+  welcomeNotice: {
+    backgroundColor: colors.white,
+    borderRadius: 18,
+    gap: spacing.medium,
+    overflow: 'hidden',
+    padding: spacing.large,
+    width: '100%',
+    maxWidth: 380,
+    elevation: 16,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+  },
+  welcomeModalBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(36, 25, 25, 0.68)',
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.medium,
+  },
+  welcomeNoticeAccent: {
+    backgroundColor: colors.primary,
+    height: 6,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  welcomeNoticeHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  welcomeNoticeIcon: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.pill,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  welcomeNoticeIconText: {
+    color: colors.primary,
+    fontSize: typography.body,
+    fontWeight: '800',
+  },
+  welcomeNoticeEyebrow: {
+    color: colors.primary,
+    fontSize: typography.overline,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+  },
+  welcomeNoticeTitle: {
+    color: '#241F20',
+    fontSize: 17,
+    fontWeight: '800',
+    lineHeight: 23,
+  },
+  welcomeNoticeClose: {
+    alignItems: 'center',
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  welcomeNoticeCloseText: {
+    color: '#A18E8E',
+    fontSize: 24,
+    lineHeight: 28,
+  },
+  welcomeNoticeCounts: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.small,
+  },
+  welcomeNoticeCount: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0F0',
+    borderColor: '#FFD5D5',
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.small,
+    paddingHorizontal: spacing.small,
+    paddingVertical: spacing.xsmall,
+  },
+  welcomeNoticeCountNumber: {
+    color: colors.primary,
+    fontSize: typography.heading,
+    fontWeight: '900',
+  },
+  welcomeNoticeCountLabel: {
+    color: '#271F1F',
+    fontSize: typography.small,
+    fontWeight: '700',
+  },
+  welcomeNoticeText: {
+    color: '#706565',
+    fontSize: typography.small,
+    lineHeight: 20,
+  },
+  welcomeNoticeButton: {
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: radius.medium,
+    justifyContent: 'center',
+    minHeight: 44,
+    marginTop: spacing.xsmall,
+  },
+  welcomeNoticeButtonText: {
+    color: colors.white,
+    fontSize: typography.small,
+    fontWeight: '800',
+  },
+  sectionContent: {
+    gap: spacing.large,
+  },
+  welcomeCard: {
+    backgroundColor: colors.navy,
+    borderRadius: radius.large,
+    gap: spacing.small,
+    overflow: 'hidden',
+    padding: spacing.large,
+  },
+  welcomeAccent: {
+    backgroundColor: colors.primary,
+    borderBottomLeftRadius: radius.medium,
+    borderTopLeftRadius: radius.medium,
+    bottom: spacing.large,
+    position: 'absolute',
+    right: 0,
+    top: spacing.large,
+    width: 5,
+  },
+  welcomeEyebrow: {
+    color: colors.accentLight,
+    fontSize: typography.overline,
+    fontWeight: '700',
+    letterSpacing: 1.4,
+  },
+  welcomeTitle: {
+    color: colors.white,
+    fontSize: typography.display,
+    fontWeight: '800',
+  },
+  welcomeCopy: {
+    color: colors.whiteMuted,
+    fontSize: typography.caption,
+    lineHeight: 21,
+    maxWidth: 290,
+  },
+  operatorBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.navyLight,
+    borderRadius: radius.pill,
+    marginTop: spacing.small,
+    paddingHorizontal: spacing.medium,
+    paddingVertical: spacing.xsmall,
+  },
+  operatorBadgeText: {
+    color: colors.white,
+    fontSize: typography.overline,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.medium,
+  },
+  summaryCard: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    flex: 1,
+    minWidth: '40%',
+    gap: spacing.xsmall,
+    minHeight: 150,
+    padding: spacing.medium,
+  },
+  isvBell: {
+    alignItems: 'center',
+    borderRadius: 8,
+    height: 28,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 10,
+    top: 10,
+    width: 28,
+  },
+  isvBellWarning: {
+    backgroundColor: '#D97706',
+  },
+  isvBellCritical: {
+    backgroundColor: '#DC2626',
+  },
+  isvBellDome: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 7,
+    borderTopRightRadius: 7,
+    height: 10,
+    width: 10,
+  },
+  isvBellBase: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 2,
+    height: 3,
+    width: 14,
+  },
+  isvBellClapper: {
+    backgroundColor: '#FFFFFF',
+    borderBottomLeftRadius: 3,
+    borderBottomRightRadius: 3,
+    height: 2,
+    marginTop: 1,
+    width: 5,
+  },
+  summaryIcon: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.small,
+    height: 32,
+    justifyContent: 'center',
+    marginBottom: spacing.xsmall,
+    width: 32,
+  },
+  summaryIconText: {
+    color: colors.primary,
+    fontSize: typography.body,
+    fontWeight: '800',
+  },
+  summaryLabel: {
+    color: colors.textSecondary,
+    fontSize: typography.caption,
+  },
+  summaryValue: {
+    color: colors.text,
+    fontSize: typography.display,
+    fontWeight: '800',
+  },
+  summaryFootnote: {
+    color: colors.textMuted,
+    fontSize: typography.small,
+  },
+  profileShortcut: {
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.medium,
+    padding: spacing.medium,
+  },
+  profileShortcutMark: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.pill,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  profileShortcutInitial: {
+    color: colors.primary,
+    fontSize: typography.body,
+    fontWeight: '800',
+  },
+  profileShortcutCopy: {
+    flex: 1,
+    gap: spacing.xsmall,
+  },
+  profileShortcutTitle: {
+    color: colors.text,
+    fontSize: typography.caption,
+    fontWeight: '700',
+  },
+  profileShortcutCaption: {
+    color: colors.textSecondary,
+    fontSize: typography.small,
+  },
+  profileShortcutArrow: {
+    color: colors.primary,
+    fontSize: 28,
+  },
+  newsOverview: {
+    alignItems: 'center',
+    backgroundColor: colors.navy,
+    borderRadius: radius.medium,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    padding: spacing.medium,
+  },
+  newsOverviewLabel: {
+    color: colors.whiteMuted,
+    fontSize: typography.overline,
+    fontWeight: '700',
+    letterSpacing: 0.7,
+  },
+  newsOverviewCount: {
+    color: colors.white,
+    fontSize: typography.heading,
+    fontWeight: '800',
+    marginTop: spacing.xsmall,
+  },
+  feedback: {
+    padding: spacing.large,
+  },
+  feedbackCard: {
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    gap: spacing.medium,
+    padding: spacing.large,
+  },
+  feedbackText: {
+    color: colors.textSecondary,
+    fontSize: typography.caption,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  emptyTitle: {
+    color: colors.text,
+    fontSize: typography.body,
+    fontWeight: '700',
+  },
+  retryText: {
+    color: colors.primary,
+    fontSize: typography.caption,
+    fontWeight: '700',
+  },
+  tableCard: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: radius.large,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  noveltyModalBackdrop: {
+    backgroundColor: 'rgba(16, 22, 30, 0.5)',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  noveltyModalCard: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: radius.large,
+    borderTopRightRadius: radius.large,
+    maxHeight: '82%',
+    padding: spacing.large,
+  },
+  noveltyModalHandle: {
+    alignSelf: 'center',
+    backgroundColor: colors.border,
+    borderRadius: radius.pill,
+    height: 4,
+    marginBottom: spacing.medium,
+    width: 42,
+  },
+  noveltyModalTitle: {
+    color: colors.text,
+    fontSize: typography.heading,
+    fontWeight: '800',
+    marginBottom: spacing.medium,
+  },
+  noveltyModalContent: {
+    gap: spacing.medium,
+    paddingBottom: spacing.medium,
+  },
+  noveltyDetailItem: {
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: spacing.xsmall,
+    paddingBottom: spacing.small,
+  },
+  noveltyDetailLabel: {
+    color: colors.textMuted,
+    fontSize: typography.small,
+    fontWeight: '700',
+  },
+  noveltyDetailValue: {
+    color: colors.text,
+    fontSize: typography.caption,
+    lineHeight: 21,
+  },
+  noveltyModalClose: {
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: radius.medium,
+    justifyContent: 'center',
+    marginTop: spacing.medium,
+    minHeight: 48,
+  },
+  noveltyModalCloseText: {
+    color: colors.white,
+    fontSize: typography.caption,
+    fontWeight: '800',
+  },
+  tableContainer: {
+    padding: spacing.medium,
+  },
+  tableHeaderRow: {
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.medium,
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  tableHeaderCell: {
+    color: colors.primary,
+    fontSize: typography.small,
+    fontWeight: '800',
+    paddingHorizontal: spacing.small,
+    paddingVertical: spacing.small,
+  },
+  tableRow: {
+    alignItems: 'center',
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    minHeight: 54,
+  },
+  tableRowAlternate: {
+    backgroundColor: '#FFFAFA',
+  },
+  isvRowWarning: {
+    backgroundColor: '#FFF7E9',
+    borderLeftColor: '#D97706',
+    borderLeftWidth: 4,
+  },
+  isvRowCritical: {
+    backgroundColor: '#FEE2E2',
+    borderLeftColor: '#DC2626',
+    borderLeftWidth: 4,
+  },
+  tableCell: {
+    color: colors.text,
+    fontSize: typography.small,
+    lineHeight: 18,
+    paddingHorizontal: spacing.small,
+    paddingVertical: spacing.medium,
+  },
+  idCell: {
+    fontWeight: '700',
+  },
+  idColumn: {
+    flex: 0.9,
+    minWidth: 68,
+  },
+  dateColumn: {
+    flex: 1,
+    minWidth: 78,
+  },
+  statusColumn: {
+    flex: 1.1,
+    minWidth: 90,
+  },
+  statusCell: {
+    alignItems: 'center',
+    paddingHorizontal: spacing.small,
+  },
+  statusPill: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.pill,
+    flexDirection: 'row',
+    gap: spacing.xsmall,
+    maxWidth: '100%',
+    paddingHorizontal: spacing.small,
+    paddingVertical: spacing.xsmall,
+  },
+  statusPillOpen: {
+    backgroundColor: '#E8F5EC',
+  },
+  statusDot: {
+    backgroundColor: colors.primary,
+    borderRadius: radius.pill,
+    height: 7,
+    width: 7,
+  },
+  statusDotOpen: {
+    backgroundColor: colors.success,
+  },
+  statusText: {
+    color: colors.text,
+    flexShrink: 1,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  statusTextOpen: {
+    color: colors.success,
+  },
+  pagination: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.xsmall,
+    paddingTop: spacing.medium,
+  },
+  paginationSummary: {
+    color: colors.textSecondary,
+    fontSize: typography.small,
+  },
+  paginationControls: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.small,
+  },
+  paginationButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.small,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  paginationButtonDisabled: {
+    backgroundColor: '#F5F1F1',
+  },
+  paginationButtonText: {
+    color: colors.primary,
+    fontSize: 24,
+    fontWeight: '700',
+    lineHeight: 28,
+  },
+  paginationButtonTextDisabled: {
+    color: colors.textMuted,
+  },
+  paginationPage: {
+    color: colors.text,
+    fontSize: typography.small,
+    fontWeight: '700',
+  },
+  profileHero: {
+    alignItems: 'center',
+    backgroundColor: colors.navy,
+    borderRadius: radius.large,
+    gap: spacing.small,
+    padding: spacing.large,
+  },
+  profileAvatar: {
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    borderColor: colors.white,
+    borderRadius: radius.pill,
+    borderWidth: 3,
+    height: 72,
+    justifyContent: 'center',
+    marginBottom: spacing.small,
+    width: 72,
+  },
+  profileAvatarInitial: {
+    color: colors.white,
+    fontSize: typography.display,
+    fontWeight: '800',
+  },
+  profileHeroName: {
+    color: colors.white,
+    fontSize: typography.body,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  profileHeroRole: {
+    color: colors.whiteMuted,
+    fontSize: typography.caption,
+    textAlign: 'center',
+  },
+  profileCard: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    gap: spacing.medium,
+    padding: spacing.medium,
+  },
+  profileRow: {
+    alignItems: 'flex-start',
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingTop: spacing.medium,
+  },
+  profileLabel: {
+    color: colors.textSecondary,
+    fontSize: typography.caption,
+  },
+  profileValue: {
+    color: colors.text,
+    flex: 1,
+    fontSize: typography.caption,
+    fontWeight: '600',
+    marginLeft: spacing.medium,
+    textAlign: 'right',
+  },
+  profileStatus: {
+    color: colors.success,
+    fontSize: typography.caption,
+    fontWeight: '700',
+  },
+  profileInactiveStatus: {
+    color: colors.danger,
+    fontSize: typography.caption,
+    fontWeight: '700',
+  },
+  logoutError: {
+    color: colors.danger,
+    fontSize: typography.caption,
+    textAlign: 'center',
+  },
+  footer: {
+    color: colors.textMuted,
+    fontSize: typography.small,
+    textAlign: 'center',
+  },
+  backdrop: {
+    backgroundColor: 'rgba(28, 8, 8, 0.48)',
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    zIndex: 1,
+  },
+  sidebar: {
+    backgroundColor: colors.navy,
+    bottom: 0,
+    elevation: 8,
+    left: 0,
+    position: 'absolute',
+    top: 0,
+    width: 292,
+    zIndex: 2,
+  },
+  sidebarWeb: {
+    maxHeight: '100%',
+    overflow: 'scroll',
+  },
+  sidebarContent: {
+    flexGrow: 1,
+    paddingBottom: spacing.large,
+    paddingHorizontal: spacing.large,
+    paddingTop: spacing.large,
+  },
+  sidebarHeader: {
+    alignItems: 'center',
+    borderBottomColor: colors.navyLight,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: spacing.medium,
+    marginBottom: spacing.large,
+    paddingBottom: spacing.large,
+  },
+  sidebarLogo: {
+    borderRadius: radius.small,
+    height: 48,
+    width: 48,
+  },
+  sidebarTitle: {
+    color: colors.white,
+    fontSize: typography.caption,
+    fontWeight: '800',
+  },
+  sidebarCaption: {
+    color: colors.whiteMuted,
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginTop: spacing.xsmall,
+  },
+  menuSectionLabel: {
+    color: colors.whiteMuted,
+    fontSize: typography.overline,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    marginBottom: spacing.small,
+  },
+  menuItem: {
+    alignItems: 'center',
+    borderColor: 'transparent',
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.small,
+    minHeight: 64,
+    paddingHorizontal: spacing.medium,
+    paddingVertical: spacing.small,
+  },
+  menuItemActive: {
+    backgroundColor: colors.navyLight,
+    borderColor: colors.primary,
+  },
+  menuItemCopy: {
+    flex: 1,
+    gap: spacing.xsmall,
+  },
+  menuItemTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xsmall,
+  },
+  menuItemIcon: {
+    color: colors.white,
+    fontSize: typography.caption,
+    fontWeight: '800',
+  },
+  menuItemText: {
+    color: colors.white,
+    fontSize: typography.caption,
+    fontWeight: '700',
+  },
+  menuItemTextActive: {
+    color: colors.accentLight,
+  },
+  menuItemDescription: {
+    color: colors.whiteMuted,
+    fontSize: typography.small,
+  },
+  menuBadge: {
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: radius.pill,
+    justifyContent: 'center',
+    minWidth: 26,
+    paddingHorizontal: spacing.small,
+    paddingVertical: spacing.xsmall,
+  },
+  menuBadgeText: {
+    color: colors.white,
+    fontSize: typography.small,
+    fontWeight: '800',
+  },
+  sidebarOperator: {
+    alignItems: 'center',
+    borderTopColor: colors.navyLight,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: spacing.small,
+    marginTop: 'auto',
+    paddingTop: spacing.medium,
+  },
+  sidebarAvatar: {
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: radius.pill,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
+  },
+  sidebarAvatarInitial: {
+    color: colors.white,
+    fontSize: typography.caption,
+    fontWeight: '800',
+  },
+  sidebarOperatorCopy: {
+    flex: 1,
+    gap: spacing.xsmall,
+  },
+  sidebarOperatorName: {
+    color: colors.white,
+    fontSize: typography.small,
+    fontWeight: '700',
+  },
+  sidebarOperatorCaption: {
+    color: colors.whiteMuted,
+    fontSize: typography.small,
+  },
+  sidebarOperatorVersion: {
+    color: colors.whiteMuted,
+    fontSize: typography.overline,
+  },
+  sidebarLogout: {
+    alignItems: 'center',
+    borderTopColor: colors.navyLight,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: spacing.small,
+    marginTop: spacing.medium,
+    paddingVertical: spacing.medium,
+  },
+  sidebarLogoutIconCircle: {
+    backgroundColor: colors.navyLight,
+    borderRadius: radius.small,
+    height: 34,
+    position: 'relative',
+    width: 34,
+  },
+  sidebarLogoutDoor: {
+    borderBottomColor: colors.accentLight,
+    borderBottomWidth: 2,
+    borderLeftColor: colors.accentLight,
+    borderLeftWidth: 2,
+    borderTopColor: colors.accentLight,
+    borderTopWidth: 2,
+    borderTopLeftRadius: 2,
+    borderBottomLeftRadius: 2,
+    height: 18,
+    left: 7,
+    position: 'absolute',
+    top: 8,
+    width: 12,
+  },
+  sidebarLogoutArrowStem: {
+    backgroundColor: colors.accentLight,
+    height: 2,
+    left: 12,
+    position: 'absolute',
+    top: 16,
+    width: 14,
+  },
+  sidebarLogoutArrowHeadTop: {
+    backgroundColor: colors.accentLight,
+    height: 2,
+    left: 21,
+    position: 'absolute',
+    top: 12,
+    transform: [{ rotate: '45deg' }],
+    width: 8,
+  },
+  sidebarLogoutArrowHeadBottom: {
+    backgroundColor: colors.accentLight,
+    height: 2,
+    left: 21,
+    position: 'absolute',
+    top: 19,
+    transform: [{ rotate: '-45deg' }],
+    width: 8,
+  },
+  sidebarLogoutText: {
+    color: colors.accentLight,
+    fontSize: typography.caption,
+    fontWeight: '700',
+  },
+});

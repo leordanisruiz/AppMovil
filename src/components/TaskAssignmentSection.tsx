@@ -1,0 +1,842 @@
+import { useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { getApiErrorMessage } from '../services/authService';
+import { tareasService } from '../services/tareasService';
+import type {
+  AssignableNovelty,
+  AssignableOperator,
+  TaskTypeOption,
+} from '../types/tarea';
+import { colors, radius, spacing, typography } from '../theme';
+import { AppButton } from './AppButton';
+import { SectionHeading } from './SectionHeading';
+
+type SearchMode = 'operador' | 'novedad';
+
+export function TaskAssignmentSection() {
+  const queryClient = useQueryClient();
+  const [searchMode, setSearchMode] = useState<SearchMode>('operador');
+  const [searchText, setSearchText] = useState('');
+  const [operator, setOperator] = useState<AssignableOperator | null>(null);
+  const [directNovelty, setDirectNovelty] = useState<AssignableNovelty | null>(null);
+  const [selectedNoveltyIds, setSelectedNoveltyIds] = useState<string[]>([]);
+  const [expandedNoveltyIds, setExpandedNoveltyIds] = useState<string[]>([]);
+  const [selectedTypeId, setSelectedTypeId] = useState<number | null>(null);
+  const [description, setDescription] = useState('');
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successNotice, setSuccessNotice] = useState<{
+    taskId: number;
+    notificationCount: number;
+  } | null>(null);
+
+  const typesQuery = useQuery({
+    queryKey: ['task-types'],
+    queryFn: tareasService.getTaskTypes,
+  });
+  const noveltiesQuery = useQuery({
+    queryKey: ['assignment-novelties', operator?.codigo],
+    queryFn: () => tareasService.getOperatorNovelties(operator!.codigo),
+    enabled: operator !== null && directNovelty === null,
+  });
+  const operatorSearch = useMutation({
+    mutationFn: tareasService.searchOperators,
+    onSuccess: (results) => {
+      setErrorMessage(null);
+      if (results.length === 0) setFeedback('No encontramos operadores con ese dato.');
+    },
+    onError: (error: unknown) => {
+      setErrorMessage(getApiErrorMessage(error, 'No fue posible buscar operadores.'));
+    },
+  });
+  const noveltySearch = useMutation({
+    mutationFn: tareasService.getNovelty,
+    onSuccess: (novelties) => {
+      setErrorMessage(null);
+      setFeedback(novelties.length === 0 ? 'No encontramos novedades abiertas con ese ID.' : null);
+    },
+    onError: (error: unknown) => {
+      setErrorMessage(getApiErrorMessage(error, 'No fue posible buscar la novedad.'));
+    },
+  });
+  const assignment = useMutation({
+    mutationFn: () => {
+      if (!operator || selectedTypeId === null) {
+        throw new Error('Selecciona el operador y el tipo de tarea.');
+      }
+      const available = directNovelty ? [directNovelty] : noveltiesQuery.data ?? [];
+      const references = available
+        .filter((novelty) => selectedNoveltyIds.includes(noveltyKey(novelty)))
+        .map(({ categoria, id_novedad }) => ({ categoria, id_novedad }));
+      if (references.length !== selectedNoveltyIds.length) {
+        throw new Error('Las novedades seleccionadas cambiaron. Vuelve a seleccionarlas.');
+      }
+      return tareasService.createAssignment({
+        operador_id: Number(operator.codigo),
+        novedades_ids: [...new Set(references.map((item) => item.id_novedad))],
+        novedades_referencias: references,
+        tipo_tarea_id: selectedTypeId,
+        descripcion: description.trim(),
+      });
+    },
+    onSuccess: async (response) => {
+      setSuccessNotice({
+        taskId: response.tarea.id,
+        notificationCount: response.notificaciones_programadas,
+      });
+      setFeedback(null);
+      await queryClient.invalidateQueries({ queryKey: ['tareas'] });
+      await queryClient.invalidateQueries({ queryKey: ['tareas-creadas'] });
+      setErrorMessage(null);
+      setOperator(null);
+      setDirectNovelty(null);
+      setSelectedNoveltyIds([]);
+      setSelectedTypeId(null);
+      setDescription('');
+      setSearchText('');
+      operatorSearch.reset();
+      noveltySearch.reset();
+    },
+    onError: (error: unknown) => {
+      setErrorMessage(getApiErrorMessage(error, 'No fue posible asignar la tarea.'));
+    },
+  });
+
+  const search = () => {
+    const term = searchText.trim();
+    if (!term || (searchMode === 'operador' && term.length < 2)) {
+      setErrorMessage(searchMode === 'operador'
+        ? 'Escribe al menos dos caracteres para buscar.'
+        : 'Escribe el ID de la novedad.');
+      return;
+    }
+    setErrorMessage(null);
+    setFeedback(null);
+    setOperator(null);
+    setDirectNovelty(null);
+    setSelectedNoveltyIds([]);
+    operatorSearch.reset();
+    noveltySearch.reset();
+    if (searchMode === 'operador') {
+      operatorSearch.mutate(term);
+    } else if (/^\d+$/.test(term)) {
+      noveltySearch.mutate(Number(term));
+    } else {
+      setErrorMessage('El ID de la novedad debe contener solo números.');
+    }
+  };
+
+  const chooseOperator = (chosen: AssignableOperator) => {
+    setOperator(chosen);
+    setDirectNovelty(null);
+    setSelectedNoveltyIds([]);
+    setFeedback(null);
+  };
+
+  const chooseNovelty = (novelty: AssignableNovelty) => {
+    setOperator({
+      codigo: String(novelty.codigo),
+      tipo_documento: novelty.tipo_documento ?? '',
+      identificacion: novelty.identificacion ?? '',
+      nombre_completo: novelty.nombre_completo ?? 'Operador',
+    });
+    setDirectNovelty(novelty);
+    setSelectedNoveltyIds([noveltyKey(novelty)]);
+    setFeedback(null);
+  };
+
+  const toggleNovelty = (noveltyId: string) => {
+    setSelectedNoveltyIds((selected) =>
+      selected.includes(noveltyId)
+        ? selected.filter((id) => id !== noveltyId)
+        : [...selected, noveltyId],
+    );
+  };
+
+  const toggleNoveltyDetails = (noveltyId: string) => {
+    setExpandedNoveltyIds((expanded) =>
+      expanded.includes(noveltyId)
+        ? expanded.filter((id) => id !== noveltyId)
+        : [...expanded, noveltyId],
+    );
+  };
+
+  const canAssign =
+    operator !== null &&
+    selectedNoveltyIds.length > 0 &&
+    selectedTypeId !== null &&
+    description.trim().length > 0 &&
+    !assignment.isPending;
+
+  return (
+    <View style={[styles.section, Platform.OS === 'web' && styles.webSection]}>
+      <SectionHeading
+        supportingText="Busca al operador, relaciona las novedades y completa los datos de la actividad."
+      />
+
+      <View style={[styles.card, Platform.OS === 'web' && styles.webCard]}>
+        <Text style={styles.fieldLabel}>BUSCAR POR</Text>
+        <View style={styles.modeRow}>
+          <ModeButton
+            active={searchMode === 'operador'}
+            label="Operador"
+            onPress={() => {
+              setSearchMode('operador');
+              setErrorMessage(null);
+            }}
+          />
+          <ModeButton
+            active={searchMode === 'novedad'}
+            label="ID de novedad"
+            onPress={() => {
+              setSearchMode('novedad');
+              setErrorMessage(null);
+            }}
+          />
+        </View>
+        <TextInput
+          accessibilityLabel={
+            searchMode === 'operador'
+              ? 'Buscar operador por código o identificación'
+              : 'Buscar novedad por ID'
+          }
+          keyboardType={searchMode === 'novedad' ? 'number-pad' : 'default'}
+          onChangeText={setSearchText}
+          onSubmitEditing={search}
+          placeholder={
+            searchMode === 'operador'
+              ? 'Código o identificación'
+              : 'Número de la novedad'
+          }
+          returnKeyType="search"
+          style={styles.searchInput}
+          value={searchText}
+        />
+        <AppButton
+          disabled={operatorSearch.isPending || noveltySearch.isPending}
+          loading={operatorSearch.isPending || noveltySearch.isPending}
+          onPress={search}
+          title="Buscar"
+        />
+      </View>
+
+      {operator === null && operatorSearch.data?.length ? (
+        <View style={styles.resultCard}>
+          <Text style={styles.cardTitle}>Resultados de operadores</Text>
+          {operatorSearch.data.map((result) => (
+            <Pressable
+              accessibilityRole="button"
+              key={`${result.codigo}-${result.identificacion}`}
+              onPress={() => chooseOperator(result)}
+              style={styles.operatorResult}
+            >
+              <View style={styles.resultMark}>
+                <Text style={styles.resultMarkText}>O</Text>
+              </View>
+              <View style={styles.resultCopy}>
+                <Text style={styles.operatorName}>{result.nombre_completo}</Text>
+                <Text style={styles.secondaryText}>
+                  {result.codigo} · {result.tipo_documento}-{result.identificacion}
+                </Text>
+              </View>
+              <Text style={styles.arrow}>›</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {operator === null && noveltySearch.data?.length ? (
+        <View style={styles.resultCard}>
+          <Text style={styles.cardTitle}>Resultados de novedades</Text>
+          {noveltySearch.data.map((novelty) => (
+            <Pressable key={`${noveltyKey(novelty)}:${novelty.codigo}`} accessibilityRole="button"
+              onPress={() => chooseNovelty(novelty)} style={styles.operatorResult}>
+              <View style={styles.resultCopy}>
+                <Text style={styles.operatorName}>
+                  {noveltyCategoryLabel(novelty.categoria)} #{novelty.id_novedad}
+                </Text>
+                <Text style={styles.secondaryText}>
+                  {novelty.nombre_completo ?? 'Operador'} · Código {novelty.codigo}
+                </Text>
+              </View>
+              <Text style={styles.arrow}>›</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {operator ? (
+        <View style={styles.resultCard}>
+          <View style={styles.selectedOperator}>
+            <View style={styles.resultMark}>
+              <Text style={styles.resultMarkText}>✓</Text>
+            </View>
+            <View style={styles.resultCopy}>
+              <Text style={styles.cardTitle}>{operator.nombre_completo}</Text>
+              <Text style={styles.secondaryText}>
+                Código {operator.codigo} · {operator.tipo_documento}-{operator.identificacion}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setOperator(null);
+                setDirectNovelty(null);
+                setSelectedNoveltyIds([]);
+              }}
+            >
+              <Text style={styles.changeText}>Cambiar</Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.cardTitle}>Novedades disponibles</Text>
+          {directNovelty ? (
+            <NoveltyRow
+              novelty={directNovelty}
+              selected={selectedNoveltyIds.includes(noveltyKey(directNovelty))}
+              onPress={() => toggleNovelty(noveltyKey(directNovelty))}
+              expanded={expandedNoveltyIds.includes(noveltyKey(directNovelty))}
+              onToggleExpanded={() => toggleNoveltyDetails(noveltyKey(directNovelty))}
+            />
+          ) : noveltiesQuery.isLoading ? (
+            <ActivityIndicator color={colors.primary} style={styles.loader} />
+          ) : noveltiesQuery.isError ? (
+            <Feedback
+              message="No fue posible cargar las novedades de este operador."
+              onRetry={() => void noveltiesQuery.refetch()}
+            />
+          ) : noveltiesQuery.data?.length ? (
+            <ScrollView style={styles.noveltyList} nestedScrollEnabled>
+              {[...noveltiesQuery.data]
+                .sort(compareNoveltyDates)
+                .map((novelty) => (
+                  <NoveltyRow
+                    key={noveltyKey(novelty)}
+                    novelty={novelty}
+                    selected={selectedNoveltyIds.includes(noveltyKey(novelty))}
+                    onPress={() => toggleNovelty(noveltyKey(novelty))}
+                    expanded={expandedNoveltyIds.includes(noveltyKey(novelty))}
+                    onToggleExpanded={() => toggleNoveltyDetails(noveltyKey(novelty))}
+                  />
+                ))}
+            </ScrollView>
+          ) : (
+            <Text style={styles.secondaryText}>
+              Este operador no tiene ICO ni inasistencias disponibles para asociar.
+            </Text>
+          )}
+
+          <Text style={styles.fieldLabel}>TIPO DE TAREA</Text>
+          {typesQuery.isLoading ? (
+            <ActivityIndicator color={colors.primary} />
+          ) : typesQuery.isError ? (
+            <Feedback
+              message="No fue posible cargar los tipos de tarea."
+              onRetry={() => void typesQuery.refetch()}
+            />
+          ) : (
+            <View style={styles.typesList}>
+              {typesQuery.data?.map((type) => (
+                <TypeOption
+                  key={type.id}
+                  option={type}
+                  selected={type.id === selectedTypeId}
+                  onPress={() => setSelectedTypeId(type.id)}
+                />
+              ))}
+            </View>
+          )}
+
+          <Text style={styles.fieldLabel}>DESCRIPCIÓN</Text>
+          <TextInput
+            accessibilityLabel="Descripción de la tarea"
+            multiline
+            onChangeText={setDescription}
+            placeholder="Escribe brevemente qué debe realizar el operador."
+            style={styles.descriptionInput}
+            textAlignVertical="top"
+            value={description}
+          />
+          {selectedNoveltyIds.length > 0 ? (
+            <Text style={styles.selectionCaption}>
+              {selectedNoveltyIds.length} novedad(es) seleccionada(s)
+            </Text>
+          ) : null}
+          <AppButton
+            disabled={!canAssign}
+            loading={assignment.isPending}
+            onPress={() => assignment.mutate()}
+            title="Crear y asignar tarea"
+          />
+        </View>
+      ) : null}
+
+      {feedback ? (
+        <View style={styles.feedbackCard}>
+          <Text style={styles.feedbackText}>{feedback}</Text>
+        </View>
+      ) : null}
+      {errorMessage ? (
+        <View style={[styles.feedbackCard, styles.errorCard]}>
+          <Text accessibilityRole="alert" style={styles.errorText}>
+            {errorMessage}
+          </Text>
+        </View>
+      ) : null}
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setSuccessNotice(null)}
+        statusBarTranslucent
+        transparent
+        visible={successNotice !== null}
+      >
+        <View style={styles.successModalBackdrop}>
+          <View
+            accessibilityViewIsModal
+            style={styles.successModal}
+          >
+            <View style={styles.successIcon}>
+              <Text style={styles.successIconText}>✓</Text>
+            </View>
+            <Text accessibilityRole="alert" style={styles.successTitle}>
+              ¡Tarea creada correctamente!
+            </Text>
+            <Text style={styles.successMessage}>
+              {successNotice
+                ? `La tarea #${successNotice.taskId} fue asignada al operador.`
+                : ''}
+            </Text>
+            {successNotice ? (
+              <Text style={styles.successDetails}>
+                {successNotice.notificationCount > 0
+                  ? `Se programó el aviso para ${successNotice.notificationCount} dispositivo(s).`
+                  : 'El operador no tiene dispositivos registrados para recibir avisos.'}
+              </Text>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setSuccessNotice(null)}
+              style={styles.successButton}
+            >
+              <Text style={styles.successButtonText}>Entendido</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+function ModeButton({
+  active,
+  label,
+  onPress,
+}: {
+  active: boolean;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={[styles.modeButton, active && styles.modeButtonActive]}
+    >
+      <Text style={[styles.modeText, active && styles.modeTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function NoveltyRow({
+  novelty,
+  selected,
+  onPress,
+  expanded,
+  onToggleExpanded,
+}: {
+  novelty: AssignableNovelty;
+  selected: boolean;
+  onPress: () => void;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+}) {
+  return (
+    <View style={styles.noveltyItem}>
+      <View style={styles.noveltyRow}>
+        <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={onPress} style={styles.noveltySelect}>
+          <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
+            {selected ? <Text style={styles.checkmark}>✓</Text> : null}
+          </View>
+          <View style={styles.noveltyCopy}>
+            <Text style={styles.noveltyTitle}>{noveltyCategoryLabel(novelty.categoria)} #{novelty.id_novedad}</Text>
+            <Text numberOfLines={2} style={styles.secondaryText}>
+              {novelty.tipo_novedad ?? 'Novedad'} ·{' '}
+              {formatNoveltyDate(novelty.fecha_novedad)}
+            </Text>
+          </View>
+          {novelty.categoria !== 'ico' ? <Text style={styles.noveltyStatus}>{novelty.estado ?? 'Sin estado'}</Text> : null}
+        </Pressable>
+        <Pressable
+          accessibilityLabel={expanded ? 'Ocultar detalle de novedad' : 'Ver detalle de novedad'}
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          onPress={onToggleExpanded}
+          style={({ pressed }) => [styles.expandButton, pressed && styles.expandButtonPressed]}
+        >
+          <View style={[styles.chevron, expanded && styles.chevronExpanded]}>
+            <View style={[styles.chevronHalf, styles.chevronLeft]} />
+            <View style={[styles.chevronHalf, styles.chevronRight]} />
+          </View>
+        </Pressable>
+      </View>
+      {expanded ? (
+        <View style={styles.noveltyDetails}>
+          <DetailField label="ID de novedad" value={novelty.id_novedad} />
+          <DetailField label="Fecha" value={formatNoveltyDate(novelty.fecha_novedad)} />
+          <DetailField label="Código" value={novelty.codigo} />
+          <DetailField label="Tipo de novedad" value={novelty.tipo_novedad} />
+          <DetailField label="Descripción" value={novelty.descripcion} />
+          {novelty.categoria !== 'ico' ? <DetailField label="Estado" value={novelty.estado} /> : null}
+          {novelty.categoria === 'danos' || novelty.categoria === 'isv' ? <DetailField label="Vehículo" value={novelty.vehiculo} /> : null}
+          {novelty.categoria === 'danos' || novelty.categoria === 'isv' ? <DetailField label="Ruta" value={novelty.ruta} /> : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function noveltyKey(novelty: AssignableNovelty): string {
+  return `${novelty.categoria}:${novelty.id_novedad}`;
+}
+
+function noveltyCategoryLabel(category: AssignableNovelty['categoria']): string {
+  if (category === 'ico') return 'ICO';
+  if (category === 'danos') return 'Daño Operativo';
+  if (category === 'isv') return 'ISV';
+  return 'Inasistencia';
+}
+
+function DetailField({ label, value }: { label: string; value: string | number | null | undefined }) {
+  return (
+    <View style={styles.detailField}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value === null || value === undefined || value === '' ? '—' : String(value)}</Text>
+    </View>
+  );
+}
+
+function compareNoveltyDates(
+  first: AssignableNovelty,
+  second: AssignableNovelty,
+): number {
+  const firstDate = Date.parse(first.fecha_novedad ?? '');
+  const secondDate = Date.parse(second.fecha_novedad ?? '');
+  const normalizedFirstDate = Number.isNaN(firstDate) ? -Infinity : firstDate;
+  const normalizedSecondDate = Number.isNaN(secondDate) ? -Infinity : secondDate;
+
+  return (
+    normalizedSecondDate - normalizedFirstDate ||
+    second.id_novedad - first.id_novedad
+  );
+}
+
+function formatNoveltyDate(value: string | null): string {
+  if (!value) return 'Fecha no disponible';
+
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (isoDate) return `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}`;
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Fecha no disponible';
+
+  return new Intl.DateTimeFormat('es-CO').format(date);
+}
+
+function TypeOption({
+  option,
+  selected,
+  onPress,
+}: {
+  option: TaskTypeOption;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={[styles.typeOption, selected && styles.typeOptionSelected]}
+    >
+      <View style={[styles.radio, selected && styles.radioSelected]} />
+      <Text style={[styles.typeText, selected && styles.typeTextSelected]}>
+        {option.nombre}
+      </Text>
+    </Pressable>
+  );
+}
+
+function Feedback({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <View style={styles.inlineFeedback}>
+      <Text style={styles.errorText}>{message}</Text>
+      <Pressable accessibilityRole="button" onPress={onRetry}>
+        <Text style={styles.changeText}>Reintentar</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  section: { gap: spacing.medium },
+  webSection: { alignSelf: 'center', maxWidth: 980, width: '100%' },
+  card: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: radius.large,
+    borderWidth: 1,
+    gap: spacing.medium,
+    padding: spacing.large,
+  },
+  webCard: { padding: spacing.xxlarge },
+  resultCard: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: radius.large,
+    borderWidth: 1,
+    gap: spacing.medium,
+    padding: spacing.medium,
+  },
+  fieldLabel: {
+    color: colors.textSecondary,
+    fontSize: typography.small,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  modeRow: { flexDirection: 'row', gap: spacing.small },
+  modeButton: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  modeButtonActive: { backgroundColor: '#FFF1F1', borderColor: colors.primary },
+  modeText: { color: colors.textSecondary, fontSize: typography.caption },
+  modeTextActive: { color: colors.primary, fontWeight: '700' },
+  searchInput: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: typography.body,
+    minHeight: 50,
+    paddingHorizontal: spacing.medium,
+  },
+  cardTitle: { color: colors.text, fontSize: typography.heading, fontWeight: '700' },
+  operatorResult: {
+    alignItems: 'center',
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.small,
+    minHeight: 64,
+    paddingVertical: spacing.small,
+  },
+  selectedOperator: {
+    alignItems: 'center',
+    backgroundColor: '#FFF8F8',
+    borderRadius: radius.medium,
+    flexDirection: 'row',
+    gap: spacing.small,
+    marginBottom: spacing.small,
+    padding: spacing.small,
+  },
+  resultMark: {
+    alignItems: 'center',
+    backgroundColor: '#FFF0F0',
+    borderRadius: radius.medium,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
+  },
+  resultMarkText: { color: colors.primary, fontWeight: '800' },
+  resultCopy: { flex: 1 },
+  operatorName: { color: colors.text, fontSize: typography.caption, fontWeight: '700' },
+  secondaryText: { color: colors.textSecondary, fontSize: typography.small, lineHeight: 19 },
+  arrow: { color: colors.primary, fontSize: 26, paddingHorizontal: spacing.small },
+  changeText: { color: colors.primary, fontSize: typography.small, fontWeight: '700' },
+  noveltyList: { maxHeight: 290 },
+  noveltyRow: {
+    alignItems: 'center',
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: spacing.small,
+    minHeight: 62,
+    paddingVertical: spacing.small,
+  },
+  noveltyItem: { borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth },
+  noveltySelect: { alignItems: 'center', flexDirection: 'row', flex: 1, gap: spacing.small, minHeight: 62 },
+  expandButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFF5F5',
+    borderColor: '#F3DADA',
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 32,
+    justifyContent: 'center',
+    marginHorizontal: spacing.xsmall,
+    width: 32,
+  },
+  expandButtonPressed: { backgroundColor: '#FCE8E8' },
+  chevron: { alignItems: 'center', height: 10, justifyContent: 'center', width: 12 },
+  chevronExpanded: { transform: [{ rotate: '180deg' }] },
+  chevronHalf: {
+    backgroundColor: colors.primary,
+    borderRadius: 1,
+    height: 2,
+    position: 'absolute',
+    top: 4,
+    width: 7,
+  },
+  chevronLeft: { left: 0, transform: [{ rotate: '45deg' }] },
+  chevronRight: { right: 0, transform: [{ rotate: '-45deg' }] },
+  noveltyDetails: { backgroundColor: '#FFF8F8', borderLeftColor: colors.primary, borderLeftWidth: 2, borderRadius: radius.medium, gap: spacing.medium, marginBottom: spacing.medium, marginLeft: 32, padding: spacing.medium },
+  detailField: { gap: 2 },
+  detailLabel: { color: colors.textSecondary, fontSize: typography.small, fontWeight: '700' },
+  detailValue: { color: colors.text, fontSize: typography.caption },
+  checkbox: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    height: 24,
+    justifyContent: 'center',
+    width: 24,
+  },
+  checkboxSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  checkmark: { color: colors.white, fontSize: 15, fontWeight: '800' },
+  noveltyCopy: { flex: 1 },
+  noveltyTitle: { color: colors.text, fontSize: typography.caption, fontWeight: '700' },
+  noveltyStatus: { color: colors.success, fontSize: 10, fontWeight: '700' },
+  typesList: { gap: spacing.xsmall },
+  typeOption: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.small,
+    minHeight: 46,
+    paddingHorizontal: spacing.medium,
+  },
+  typeOptionSelected: { backgroundColor: '#FFF8F8', borderColor: colors.primary },
+  radio: {
+    borderColor: colors.textMuted,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    height: 18,
+    width: 18,
+  },
+  radioSelected: { borderColor: colors.primary, borderWidth: 5 },
+  typeText: { color: colors.text, fontSize: typography.caption },
+  typeTextSelected: { color: colors.primary, fontWeight: '700' },
+  descriptionInput: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: typography.caption,
+    minHeight: 110,
+    padding: spacing.medium,
+  },
+  selectionCaption: { color: colors.textSecondary, fontSize: typography.small },
+  loader: { padding: spacing.large },
+  feedbackCard: {
+    backgroundColor: '#EDF8F1',
+    borderRadius: radius.medium,
+    padding: spacing.medium,
+  },
+  successModalBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(36, 25, 25, 0.55)',
+    flex: 1,
+    justifyContent: 'center',
+    padding: spacing.large,
+  },
+  successModal: {
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    borderRadius: radius.large,
+    gap: spacing.medium,
+    maxWidth: 420,
+    padding: spacing.large,
+    width: '100%',
+  },
+  successIcon: {
+    alignItems: 'center',
+    backgroundColor: '#E8F5EE',
+    borderRadius: 28,
+    height: 56,
+    justifyContent: 'center',
+    width: 56,
+  },
+  successIconText: { color: colors.success, fontSize: 30, fontWeight: '800' },
+  successTitle: {
+    color: colors.text,
+    fontSize: typography.heading,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  successMessage: {
+    color: colors.textSecondary,
+    fontSize: typography.body,
+    textAlign: 'center',
+  },
+  successDetails: {
+    color: colors.textSecondary,
+    fontSize: typography.small,
+    textAlign: 'center',
+  },
+  successButton: {
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: radius.medium,
+    justifyContent: 'center',
+    minHeight: 46,
+    paddingHorizontal: spacing.large,
+    width: '100%',
+  },
+  successButtonText: {
+    color: colors.white,
+    fontSize: typography.caption,
+    fontWeight: '700',
+  },
+  feedbackText: { color: colors.text, fontSize: typography.caption, lineHeight: 20 },
+  errorCard: { backgroundColor: '#FFF1F1' },
+  errorText: { color: colors.danger, fontSize: typography.caption, lineHeight: 20 },
+  inlineFeedback: { alignItems: 'center', flexDirection: 'row', gap: spacing.small },
+});

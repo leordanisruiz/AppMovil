@@ -1,13 +1,38 @@
-# Environment files and secrets
-.env
-.env.*
-!.env.example
-*.pem
-*.key
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
 *.p8
 *.p12
-*.jks
+*.key
 *.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env
+.env.*
+.env*.local
+!.env.example
 
 # Python
 __pycache__/
@@ -17,10 +42,9 @@ __pycache__/
 venv/
 logs/
 
-# Node.js and Expo
-node_modules/
-.expo/
-dist/
-web-build/
-expo-env.d.ts
+# typescript
 *.tsbuildinfo
+
+# generated native folders
+/ios
+/android
