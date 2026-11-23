@@ -4,16 +4,21 @@ services:
     build:
       context: ./backend/backend
     restart: unless-stopped
+
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-8010}:8000"
+
     env_file:
       - ./backend/.env
+
     environment:
       APP_NAME: ${APP_NAME:-AppMovil API}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_DIR: ${LOG_DIR:-/backend/logs}
+
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+
       EVIDENCIAS_PATH: ${EVIDENCIAS_CONTAINER_PATH:-/mnt/evidencias}
 
       EVIDENCE_THUMBNAIL_CACHE_DIR: ${EVIDENCE_THUMBNAIL_CACHE_DIR:-/var/cache/appmovil/evidence-thumbnails}
@@ -22,6 +27,7 @@ services:
       EVIDENCE_MEDIA_CACHE_MAX_BYTES: ${EVIDENCE_MEDIA_CACHE_MAX_BYTES:-2147483648}
       EVIDENCE_VIDEO_CACHE_MAX_FILE_BYTES: ${EVIDENCE_VIDEO_CACHE_MAX_FILE_BYTES:-16777216}
 
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
       EXPO_POLL_INTERVAL_SECONDS: ${EXPO_POLL_INTERVAL_SECONDS:-5}
       EXPO_POLL_BATCH_SIZE: ${EXPO_POLL_BATCH_SIZE:-100}
 
@@ -33,8 +39,11 @@ services:
   push-worker:
     build:
       context: ./backend/backend
+
     command: ["python", "-m", "app.worker"]
+
     restart: unless-stopped
+
     depends_on:
       - api
 
@@ -43,6 +52,7 @@ services:
 
     environment:
       LOG_DIR: ${LOG_DIR:-/backend/logs}
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
       EXPO_POLL_INTERVAL_SECONDS: ${EXPO_POLL_INTERVAL_SECONDS:-5}
       EXPO_POLL_BATCH_SIZE: ${EXPO_POLL_BATCH_SIZE:-100}
 
@@ -53,8 +63,11 @@ services:
   frontend:
     build:
       context: ./operadores-app
+
     container_name: appmovil-frontend
+
     restart: unless-stopped
+
     ports:
       - "3000:80"
 
