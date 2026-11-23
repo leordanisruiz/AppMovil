@@ -5,8 +5,8 @@ import { tokenStorage } from '../services/tokenStorage';
 export const apiBaseUrl =
   process.env.EXPO_PUBLIC_API_URL ??
   (Platform.OS === 'web'
-    ? 'http://localhost:8000/api/v1'
-    : 'http://172.20.13.56:8000/api/v1');
+    ? 'http://localhost:8010/api/v1'
+    : 'http://172.20.13.56:8010/api/v1');
 
 console.log('EXPO_PUBLIC_API_URL=', process.env.EXPO_PUBLIC_API_URL);
 console.log('API URL=', apiBaseUrl);
