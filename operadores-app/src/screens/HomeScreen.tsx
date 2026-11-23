@@ -199,10 +199,17 @@ export function HomeScreen() {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void registerPush();
-        if (operatorCode) {
-          void queryClient.invalidateQueries({
-            queryKey: ['novedades', operatorCode],
-          });
+        if (canViewNovelties && operatorCode) {
+          const noveltyQueryKey = ['novedades', operatorCode] as const;
+          void queryClient.refetchQueries({ queryKey: noveltyQueryKey, type: 'active' })
+            .then(() => {
+              const latestNovelties = queryClient.getQueryData<NovedadesResumen>(noveltyQueryKey);
+              if (latestNovelties) return syncAppBadge(latestNovelties.total);
+              return undefined;
+            })
+            .catch((error: unknown) => {
+              console.error('No se pudo restaurar el contador de novedades:', error);
+            });
         }
       }
     });
@@ -210,7 +217,7 @@ export function HomeScreen() {
       cancelAnimationFrame(frame);
       subscription.remove();
     };
-  }, [canRegisterPush, operatorCode, registerPush]);
+  }, [canRegisterPush, canViewNovelties, operatorCode, registerPush]);
 
 
   useEffect(() => {

@@ -61,26 +61,26 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   const { operator } = useAuth();
   const canManageEvidence = operator?.rolId === 1 || operator?.rolId === 2;
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
-  const [isPreparingVideo, setIsPreparingVideo] = useState(false);
+  const [preparingEvidence, setPreparingEvidence] = useState<'photo' | 'video' | null>(null);
   const [taskPageState, setTaskPageState] = useState({ filterKey: '', page: 1 });
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>(initialStatusFilter);
   const detailBackSwipe = useMemo(
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_event, gesture) =>
-          selectedTaskId !== null && !isPreparingVideo &&
+          selectedTaskId !== null && preparingEvidence === null &&
           gesture.x0 <= 64 &&
           gesture.dx >= 36 &&
           Math.abs(gesture.dy) < 55,
         onPanResponderRelease: (_event, gesture) => {
-          if (selectedTaskId === null || isPreparingVideo || gesture.dx < 92) return;
+          if (selectedTaskId === null || preparingEvidence !== null || gesture.dx < 92) return;
           setSelectedTaskId(null);
           setSelectedAssets([]);
           setActionError(null);
           setActionSuccess(null);
         },
       }),
-    [selectedTaskId, isPreparingVideo],
+    [selectedTaskId, preparingEvidence],
   );
   const [selectedAssets, setSelectedAssets] = useState<TaskEvidenceAsset[]>([]);
   const selectedAssetsRef = useRef<TaskEvidenceAsset[]>([]);
@@ -261,7 +261,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   const captureNative = async (mode: 'photo' | 'video') => {
     try {
       const asset = await captureNativeEvidence(
-        mode, MAX_VIDEO_DURATION_MS / 1000, () => setIsPreparingVideo(true),
+        mode, MAX_VIDEO_DURATION_MS / 1000, setPreparingEvidence,
       );
       if (asset) addAssets([asset]);
     } catch (error) {
@@ -269,7 +269,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
         mode === 'photo' ? 'No fue posible tomar la foto.' : 'No fue posible grabar el video.'
       ));
     } finally {
-      if (mode === 'video') setIsPreparingVideo(false);
+      setPreparingEvidence(null);
     }
   };
 
@@ -282,7 +282,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
   useEffect(() => {
     if (selectedTaskId === null) return undefined;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (isPreparingVideo) return true;
+      if (preparingEvidence !== null) return true;
       setSelectedTaskId(null);
       setSelectedAssets([]);
       setActionError(null);
@@ -290,7 +290,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
       return true;
     });
     return () => subscription.remove();
-  }, [selectedTaskId, isPreparingVideo]);
+  }, [selectedTaskId, preparingEvidence]);
 
   if (!operatorCode) {
     return (
@@ -309,8 +309,8 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
       <View style={styles.section} {...detailBackSwipe.panHandlers}>
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: isPreparingVideo }}
-          disabled={isPreparingVideo}
+          accessibilityState={{ disabled: preparingEvidence !== null }}
+          disabled={preparingEvidence !== null}
           onPress={() => {
             setSelectedTaskId(null);
             setSelectedAssets([]);
@@ -338,7 +338,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
             task={task}
             operatorCode={operatorCode}
             selectedAssets={selectedAssets}
-            isPreparingVideo={isPreparingVideo}
+            preparingEvidence={preparingEvidence}
             isUploading={uploadMutation.isPending}
             isUpdatingStatus={statusMutation.isPending}
             actionError={actionError}
@@ -534,7 +534,7 @@ function TaskDetail({
   task,
   operatorCode,
   selectedAssets,
-  isPreparingVideo,
+  preparingEvidence,
   isUploading,
   isUpdatingStatus,
   actionError,
@@ -548,7 +548,7 @@ function TaskDetail({
   task: OperatorTask;
   operatorCode: string;
   selectedAssets: TaskEvidenceAsset[];
-  isPreparingVideo: boolean;
+  preparingEvidence: 'photo' | 'video' | null;
   isUploading: boolean;
   isUpdatingStatus: boolean;
   actionError: string | null;
@@ -612,8 +612,8 @@ function TaskDetail({
           {canAttach ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ disabled: isPreparingVideo || isUploading }}
-              disabled={isPreparingVideo || isUploading}
+              accessibilityState={{ disabled: preparingEvidence !== null || isUploading }}
+              disabled={preparingEvidence !== null || isUploading}
               onPress={onAttach}
               style={styles.attachSmallButton}
             >
@@ -622,10 +622,16 @@ function TaskDetail({
           ) : null}
         </View>
 
-        {isPreparingVideo ? (
-          <View accessibilityRole="progressbar" accessibilityLabel="Preparando video" style={styles.preparingVideo}>
+        {preparingEvidence ? (
+          <View
+            accessibilityRole="progressbar"
+            accessibilityLabel={preparingEvidence === 'photo' ? 'Preparando imágenes' : 'Preparando video'}
+            style={styles.preparingVideo}
+          >
             <ActivityIndicator color={colors.primary} />
-            <Text style={styles.preparingVideoText}>Preparando video...</Text>
+            <Text style={styles.preparingVideoText}>
+              {preparingEvidence === 'photo' ? 'Preparando imágenes...' : 'Preparando video...'}
+            </Text>
           </View>
         ) : null}
 
@@ -664,7 +670,7 @@ function TaskDetail({
                   <Pressable
                     accessibilityLabel={`Eliminar ${asset.name}`}
                     accessibilityRole="button"
-                    disabled={isPreparingVideo || isUploading}
+                    disabled={preparingEvidence !== null || isUploading}
                     onPress={() => onRemoveAsset(asset.uri)}
                     style={styles.removeEvidenceButton}
                   >
@@ -677,7 +683,7 @@ function TaskDetail({
               ))}
             </View>
             <AppButton
-              disabled={isUploading || isPreparingVideo}
+              disabled={isUploading || preparingEvidence !== null}
               loading={isUploading}
               onPress={onUpload}
               title="Subir evidencias"
@@ -699,7 +705,7 @@ function TaskDetail({
 
       {(task.estado === 'EN_PROCESO' || task.estado === 'PENDIENTE') ? (
         <AppButton
-          disabled={isUpdatingStatus || isPreparingVideo}
+          disabled={isUpdatingStatus || preparingEvidence !== null}
           loading={isUpdatingStatus}
           onPress={onComplete}
           title="Marcar como completada"

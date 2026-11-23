@@ -97,12 +97,6 @@ export async function syncAppBadge(pendingCount: number): Promise<void> {
   if (typeof Notifications.setBadgeCountAsync !== 'function') {
     throw new Error('El dispositivo no permite actualizar el contador de la aplicación.');
   }
-  if (Platform.OS === 'android' && pendingCount <= 0) {
-    const presented = await Notifications.getPresentedNotificationsAsync();
-    if (presented.some((notification) => !isNoveltyNotification(notification.request.content.data))) {
-      throw new Error('No se puede limpiar el contador sin eliminar otras notificaciones activas.');
-    }
-  }
   const updated = await Notifications.setBadgeCountAsync(Math.max(0, pendingCount));
   if (!updated) {
     throw new Error('El lanzador no admite actualizar el contador de la aplicación.');

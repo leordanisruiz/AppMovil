@@ -124,13 +124,13 @@ test('avisa antes de abrir la cámara y mantiene la espera hasta recibir el vide
   assert.equal(calls[4], 'location');
 });
 
-test('el aviso de preparación no se activa para fotos ni si faltan permisos', async () => {
+test('prepara la foto aceptada y no activa el aviso si faltan permisos', async () => {
   const photo = createCapture({ asset: { uri: 'file:///foto.jpg' } });
   const denied = createCapture({ microphone: false });
-  let calls = 0;
-  await photo.capture('photo', 180, () => { calls += 1; });
-  await assert.rejects(denied.capture('video', 180, () => { calls += 1; }), /micrófono/);
-  assert.equal(calls, 0);
+  const preparationModes = [];
+  await photo.capture('photo', 180, (mode) => preparationModes.push(mode));
+  await assert.rejects(denied.capture('video', 180, (mode) => preparationModes.push(mode)), /micrófono/);
+  assert.deepEqual(preparationModes, ['photo']);
 });
 
 test('se propagan los errores de la cámara después de activar la preparación', async () => {
