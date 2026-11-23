@@ -65,7 +65,7 @@ const sectionTitles: Record<PortalSection, string> = {
   evidencias: 'Evidencias',
 };
 
-const appVersion = Constants.expoConfig?.version ?? '1.2.6';
+const appVersion = Constants.expoConfig?.version ?? '1.2.7';
 const noveltyCategories: { id: CategoriaNovedad; label: string }[] = [
   { id: 'ico', label: 'ICO' },
   { id: 'isv', label: 'ISV' },
@@ -197,21 +197,27 @@ export function HomeScreen() {
     if (!canRegisterPush) return undefined;
     const frame = requestAnimationFrame(() => void registerPush());
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void registerPush();
+      if (state === 'active') {
+        void registerPush();
+        if (operatorCode) {
+          void queryClient.invalidateQueries({
+            queryKey: ['novedades', operatorCode],
+          });
+        }
+      }
     });
     return () => {
       cancelAnimationFrame(frame);
       subscription.remove();
     };
-  }, [canRegisterPush, registerPush]);
+  }, [canRegisterPush, operatorCode, registerPush]);
 
 
   useEffect(() => {
     if (!canViewNovelties || !novedades) return;
-    const pendingCount = noveltyCategories.reduce(
-      (total, { id }) => total + novedades.categorias[id].novedades.filter((item) => !item.Vista).length,
-      0,
-    );
+    // The badge tracks novelties still returned by the open/current-state
+    // queries. Reading a novelty must not decrement this count.
+    const pendingCount = novedades.total;
 
     void syncAppBadge(pendingCount).catch((error: unknown) => {
       console.error('No se pudo actualizar el contador del icono:', error);

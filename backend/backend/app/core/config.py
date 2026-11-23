@@ -1,0 +1,119 @@
+import os
+import tempfile
+from dataclasses import dataclass
+from functools import lru_cache
+from urllib.parse import urlsplit
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+@dataclass(frozen=True)
+class Settings:
+    app_name: str
+    environment: str
+    api_v1_prefix: str
+    database_url: str | None
+    jwt_secret_key: str | None
+    jwt_algorithm: str
+    access_token_expire_minutes: int
+    evidencias_path: str = r"\\172.20.10.32\web"
+    expo_push_token_encryption_key: str | None = None
+    expo_access_token: str | None = None
+    expo_poll_interval_seconds: int = 5
+    expo_poll_batch_size: int = 100
+    cors_origins: tuple[str, ...] = (
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+    )
+    cors_origin_regex: str | None = None
+    evidence_cache_path: str = "/var/cache/appmovil"
+    evidence_thumbnail_cache_max_bytes: int = 536870912
+    evidence_media_cache_max_bytes: int = 2147483648
+    evidence_original_cache_max_bytes: int = 1610612736
+    evidence_video_cache_max_bytes: int = 536870912
+    evidence_video_cache_max_file_bytes: int = 16777216
+    evidence_cache_expiry_seconds: int = 604800
+    evidence_cache_cleanup_interval_seconds: int = 3600
+
+
+@lru_cache
+def get_settings() -> Settings:
+    cors_origins = tuple(
+        _normalize_origin(origin)
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:8081,http://127.0.0.1:8081",
+        ).split(",")
+        if origin.strip()
+    )
+    return Settings(
+        app_name=os.getenv("APP_NAME", "AppMovil API"),
+        environment=os.getenv("ENVIRONMENT", "development"),
+        api_v1_prefix=os.getenv("API_V1_PREFIX", "/api/v1"),
+        cors_origins=cors_origins,
+        cors_origin_regex=(
+            os.getenv("CORS_ORIGIN_REGEX")
+            or r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+        ),
+        database_url=os.getenv("DATABASE_URL") or None,
+        jwt_secret_key=os.getenv("JWT_SECRET_KEY") or None,
+        jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
+        access_token_expire_minutes=int(
+            os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+        ),
+        evidencias_path=os.getenv(
+            "EVIDENCIAS_PATH",
+            r"\\172.20.10.32\web",
+        ),
+        expo_push_token_encryption_key=(
+            os.getenv("EXPO_PUSH_TOKEN_ENCRYPTION_KEY") or None
+        ),
+        expo_access_token=os.getenv("EXPO_ACCESS_TOKEN") or None,
+        expo_poll_interval_seconds=int(
+            os.getenv("EXPO_POLL_INTERVAL_SECONDS", "5")
+        ),
+        expo_poll_batch_size=int(os.getenv("EXPO_POLL_BATCH_SIZE", "100")),
+        evidence_cache_path=os.getenv(
+            "EVIDENCE_CACHE_PATH",
+            os.path.join(tempfile.gettempdir(), "appmovil-cache")
+            if os.name == "nt"
+            else "/var/cache/appmovil",
+        ),
+        evidence_thumbnail_cache_max_bytes=int(
+            os.getenv("EVIDENCE_THUMBNAIL_CACHE_MAX_BYTES", str(512 * 1024 * 1024))
+        ),
+        evidence_media_cache_max_bytes=int(
+            os.getenv("EVIDENCE_MEDIA_CACHE_MAX_BYTES", str(2 * 1024 * 1024 * 1024))
+        ),
+        evidence_original_cache_max_bytes=int(
+            os.getenv(
+                "EVIDENCE_ORIGINAL_CACHE_MAX_BYTES",
+                os.getenv("EVIDENCE_MEDIA_CACHE_MAX_BYTES", str(1536 * 1024 * 1024)),
+            )
+        ),
+        evidence_video_cache_max_bytes=int(
+            os.getenv(
+                "EVIDENCE_VIDEO_CACHE_MAX_BYTES",
+                os.getenv("EVIDENCE_MEDIA_CACHE_MAX_BYTES", str(512 * 1024 * 1024)),
+            )
+        ),
+        evidence_video_cache_max_file_bytes=int(
+            os.getenv("EVIDENCE_VIDEO_CACHE_MAX_FILE_BYTES", str(16 * 1024 * 1024))
+        ),
+        evidence_cache_expiry_seconds=int(
+            os.getenv("EVIDENCE_CACHE_EXPIRY_SECONDS", str(7 * 24 * 60 * 60))
+        ),
+        evidence_cache_cleanup_interval_seconds=int(
+            os.getenv("EVIDENCE_CACHE_CLEANUP_INTERVAL_SECONDS", "3600")
+        ),
+    )
+
+
+def _normalize_origin(origin: str) -> str:
+    """CORS compares origins, which never include an application subpath."""
+    parsed = urlsplit(origin.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return origin.strip().rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}"

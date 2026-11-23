@@ -1,0 +1,141 @@
+import unittest
+from typing import Any, cast
+from unittest.mock import Mock
+
+from sqlalchemy.orm import Session
+
+from app.repositories import tareas_repository
+from app.repositories.tareas_repository import TareasRepository
+
+
+class TareasRepositoryTests(unittest.TestCase):
+    def test_assignment_queries_cover_both_sources_and_bind_search(self) -> None:
+        db = Mock()
+        db.execute.return_value.mappings.return_value.all.return_value = []
+        repository = TareasRepository()
+        for method, argument, parameter in (
+            (repository.list_assignable_novelties, {"codigo_operador": 809772}, "codigo_operador"),
+            (repository.search_assignable_novelties, {"novedad_id": 17}, "novedad_id"),
+        ):
+            method(cast(Session, db), **argument)
+            statement, params = db.execute.call_args.args
+            sql = str(statement)
+            self.assertIn('"DW_SUMA"."FactICO"', sql)
+            self.assertIn('"DW_SUMA"."FactNovedadesSico"', sql)
+            self.assertIn("fi.\"TipoNovedad\" <> 'I5025'", sql)
+            self.assertIn('fns."Grupo" LIKE \'%Inasistencia%\'', sql)
+            self.assertIn('fns."Estado" IN (\'PEOCESO\', \'PROCESO\')', sql)
+            self.assertEqual(params, {parameter: argument[parameter]})
+
+    def test_operator_search_casts_searchable_identifiers_to_text(self) -> None:
+        expected_rows: list[dict[str, Any]] = [
+            {"codigo": "809772", "identificacion": "809772"},
+        ]
+        result = Mock()
+        result.mappings.return_value.all.return_value = expected_rows
+        db = Mock()
+        db.execute.return_value = result
+        repository = TareasRepository()
+
+        rows = repository.search_operators(
+            cast(Session, db),
+            search="809772",
+        )
+
+        self.assertEqual(rows, expected_rows)
+        statement, parameters = db.execute.call_args.args
+        sql = str(statement)
+        self.assertIn(
+            'de."Identificacion"::text AS identificacion',
+            sql,
+        )
+        self.assertIn('de."Codigo"::text ILIKE :termino', sql)
+        self.assertIn('de."Identificacion"::text ILIKE :termino', sql)
+        self.assertEqual(parameters, {"termino": "%809772%"})
+
+    def test_operator_lookups_return_identification_as_text(self) -> None:
+        db = Mock()
+        repository = TareasRepository()
+
+        repository.get_operator_by_code(
+            cast(Session, db),
+            codigo_operador=809772,
+        )
+
+        statement, parameters = db.execute.call_args.args
+        self.assertIn('de."Codigo"::text = :codigo_operador', str(statement))
+        self.assertIn(
+            'de."Identificacion"::text AS identificacion',
+            str(statement),
+        )
+        self.assertEqual(parameters, {"codigo_operador": "809772"})
+
+    def test_novelty_lookup_returns_identification_as_text(self) -> None:
+        db = Mock()
+        repository = TareasRepository()
+
+        repository.get_novelty(
+            cast(Session, db),
+            novedad_id=17,
+        )
+
+        statement, parameters = db.execute.call_args.args
+        self.assertIn(
+            'de."Identificacion"::text AS identificacion',
+            str(statement),
+        )
+        self.assertEqual(parameters, {"novedad_id": 17})
+
+    def test_novelty_lookup_joins_operator_codes_as_text(self) -> None:
+        self.assertIn(
+            'BTRIM(de."Codigo"::text) = BTRIM(fns."Codigo"::text)',
+            str(tareas_repository._NOVELTY_BY_ID),
+        )
+
+    def test_open_novelty_queries_normalize_code_and_status(self) -> None:
+        operator_novelties = str(tareas_repository._OPERATOR_NOVELTIES)
+        selected_novelties = str(tareas_repository._NOVELTIES_BY_IDS)
+
+        self.assertIn(
+            'BTRIM(fns."Codigo"::text) = BTRIM(CAST(:codigo_operador AS text))',
+            operator_novelties,
+        )
+        for statement in (operator_novelties, selected_novelties):
+            self.assertIn(
+                "UPPER(BTRIM(fns.\"Estado\")) IN ('PEOCESO', 'PROCESO')",
+                statement,
+            )
+
+    def test_task_notification_enqueue_compares_employee_and_device_text(self) -> None:
+        statement = str(tareas_repository._ENQUEUE_TASK_NOTIFICATIONS)
+
+        self.assertIn(
+            'employee."Identificacion"::text = device.identificacion',
+            statement,
+        )
+        self.assertIn(
+            'employee."Codigo" = CAST(:operador_id AS text)',
+            statement,
+        )
+
+    def test_closing_queues_operator_notification_and_warns_without_tokens(self) -> None:
+        task_result = Mock()
+        task_result.mappings.return_value.one_or_none.return_value = {"id": 55}
+        enqueue_result = Mock(rowcount=0)
+        db = Mock()
+        db.execute.side_effect = [task_result, enqueue_result]
+
+        with self.assertLogs("app.repositories.tareas_repository", level="WARNING"):
+            task = TareasRepository().close_created_task(
+                cast(Session, db), tarea_id=55, usuario_creacion="CC-123",
+            )
+
+        self.assertEqual(task, {"id": 55})
+        statement, parameters = db.execute.call_args_list[1].args
+        self.assertIs(statement, tareas_repository._ENQUEUE_TASK_STATUS_NOTIFICATIONS)
+        self.assertEqual(parameters, {"task_id": 55, "task_event": "cerrada"})
+        db.commit.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()
