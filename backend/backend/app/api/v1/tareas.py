@@ -320,6 +320,32 @@ def subir_evidencias(
     )
 
 
+@router.delete(
+    "/{tarea_id}/evidencias/{nombre}",
+    response_model=TareaResponse,
+    summary="Eliminar una evidencia de una tarea abierta",
+    responses={
+        404: {"description": "La tarea o evidencia no existe."},
+        409: {"description": "La tarea está cerrada o no permite cambios."},
+        503: {"description": "No fue posible limpiar el archivo almacenado."},
+    },
+)
+def eliminar_evidencia(
+    tarea_id: int,
+    nombre: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> TareaResponse:
+    tipo_documento, identificacion = _authenticated_identity(request)
+    return tareas_service.delete_evidence(
+        db,
+        tarea_id=tarea_id,
+        nombre=nombre,
+        tipo_documento=tipo_documento,
+        identificacion=identificacion,
+    )
+
+
 @router.get(
     "/{tarea_id}/evidencias/{nombre}",
     summary="Ver una evidencia de una tarea asignada",

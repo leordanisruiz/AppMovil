@@ -1011,6 +1011,84 @@ class TareasService:
             )
         return path, _evidence_download_name(nombre)
 
+    def delete_evidence(
+        self,
+        db: Session,
+        *,
+        tarea_id: int,
+        nombre: str,
+        tipo_documento: str,
+        identificacion: str,
+    ) -> TareaResponse:
+        """Delete one evidence owned by the authenticated operator."""
+        operador_id = self._get_authenticated_operator_id(
+            db,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        task = self._get_task_row(db, tarea_id=tarea_id, operador_id=operador_id)
+        if task is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La tarea no existe o no está asignada a este operador.",
+            )
+        if str(task["estado"]).upper() in {"CERRADO", "CERRADA"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No se pueden eliminar evidencias de una tarea cerrada.",
+            )
+        if str(task["estado"]).upper() not in {"PENDIENTE", "EN_PROCESO", "COMPLETADA"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="La tarea no permite eliminar evidencias en su estado actual.",
+            )
+
+        path, _ = self.get_evidence_path(
+            db,
+            tarea_id=tarea_id,
+            nombre=nombre,
+            tipo_documento=tipo_documento,
+            identificacion=identificacion,
+        )
+        try:
+            updated = self._tareas_repository.delete_evidence(
+                db,
+                tarea_id=tarea_id,
+                operador_id=operador_id,
+                nombre=nombre,
+            )
+        except SQLAlchemyError as exc:
+            db.rollback()
+            self._raise_database_unavailable("delete evidence", exc)
+        if updated is None:
+            latest = self._get_task_row(db, tarea_id=tarea_id, operador_id=operador_id)
+            if latest is not None and str(latest["estado"]).upper() in {"CERRADO", "CERRADA"}:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="No se pueden eliminar evidencias de una tarea cerrada.",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La evidencia ya no existe.",
+            )
+
+        get_evidence_cache().invalidate_source(path)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.error(
+                "Evidence metadata removed but storage cleanup failed: task=%s file=%s.",
+                tarea_id,
+                nombre,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="La evidencia se quitó de la tarea, pero no fue posible limpiar el archivo almacenado.",
+            ) from exc
+        logger.info("Evidence deleted for task %s (%s).", tarea_id, nombre)
+        return _to_task_response(updated)
+
     def _get_task_row(
         self,
         db: Session,

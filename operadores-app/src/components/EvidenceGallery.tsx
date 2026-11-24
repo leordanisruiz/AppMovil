@@ -43,6 +43,8 @@ type EvidenceGalleryProps = {
   selectionEnabled?: boolean;
   selectedEvidenceKeys?: string[];
   onToggleEvidence?: (key: string) => void;
+  canDeleteEvidence?: boolean;
+  onDeleteEvidence?: (evidence: GalleryEvidence) => Promise<unknown>;
 };
 
 type EvidenceAction = 'download' | 'share';
@@ -59,6 +61,8 @@ export function EvidenceGallery({
   selectionEnabled = false,
   selectedEvidenceKeys = [],
   onToggleEvidence,
+  canDeleteEvidence = false,
+  onDeleteEvidence,
 }: EvidenceGalleryProps) {
   const { width: viewportWidth } = useWindowDimensions();
   const desktop = Platform.OS === 'web' && viewportWidth >= 1200;
@@ -68,6 +72,27 @@ export function EvidenceGallery({
   const { headers, headersReady } = useEvidenceAuthHeaders();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [previewLimit, setPreviewLimit] = useState(4);
+  const [deleteSelectionKey, setDeleteSelectionKey] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<GalleryEvidence | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const confirmEvidenceDeletion = async () => {
+    if (!deleteTarget || !onDeleteEvidence || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await onDeleteEvidence(deleteTarget);
+      await removeCachedEvidenceFile(deleteTarget.taskId ?? taskId, deleteTarget);
+      setDeleteTarget(null);
+      setDeleteSelectionKey(null);
+      setActiveIndex(null);
+      setDeleteError(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Inténtalo nuevamente.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   useEffect(() => {
     // expo-image's web prefetch implementation uses a plain <img> and cannot
@@ -117,6 +142,10 @@ export function EvidenceGallery({
               }
             }}
             onLongPress={() => onToggleEvidence?.(getEvidenceSelectionKey(evidence, taskId))}
+            canDelete={canDeleteEvidence}
+            deleteSelected={deleteSelectionKey === getEvidenceSelectionKey(evidence, taskId)}
+            onLongPressDelete={() => setDeleteSelectionKey(getEvidenceSelectionKey(evidence, taskId))}
+            onDelete={() => { setDeleteError(null); setDeleteTarget(evidence); }}
             selectable={selectionEnabled}
             selected={selectedEvidenceKeys.includes(getEvidenceSelectionKey(evidence, taskId))}
             taskId={evidence.taskId ?? taskId}
@@ -133,6 +162,30 @@ export function EvidenceGallery({
         onClose={() => setActiveIndex(null)}
         taskId={taskId}
       />
+      <Modal
+        animationType="fade"
+        onRequestClose={() => { if (!isDeleting) setDeleteTarget(null); }}
+        transparent
+        visible={deleteTarget !== null}
+      >
+        <View style={styles.deleteModalBackdrop}>
+          <View style={styles.deleteModalCard}>
+            <Text style={styles.deleteModalTitle}>Eliminar evidencia</Text>
+            <Text style={styles.deleteModalMessage}>
+              ¿Estás seguro de que deseas eliminar “{deleteTarget ? getEvidenceDisplayName(deleteTarget.nombre) : ''}”? Esta acción no se puede deshacer.
+            </Text>
+            {deleteError ? <Text style={styles.deleteModalError}>{deleteError}</Text> : null}
+            <View style={styles.deleteModalActions}>
+              <Pressable disabled={isDeleting} onPress={() => { setDeleteTarget(null); setDeleteError(null); }} style={styles.deleteCancelButton}>
+                <Text style={styles.deleteCancelText}>Cancelar</Text>
+              </Pressable>
+              <Pressable disabled={isDeleting} onPress={() => void confirmEvidenceDeletion()} style={styles.deleteConfirmButton}>
+                {isDeleting ? <ActivityIndicator color={colors.white} /> : <Text style={styles.deleteConfirmText}>Eliminar</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -148,6 +201,10 @@ function EvidenceCard({
   onLongPress,
   selectable,
   selected,
+  canDelete,
+  deleteSelected,
+  onLongPressDelete,
+  onDelete,
   cardWidth,
 }: {
   taskId: number;
@@ -160,6 +217,10 @@ function EvidenceCard({
   onLongPress: () => void;
   selectable: boolean;
   selected: boolean;
+  canDelete: boolean;
+  deleteSelected: boolean;
+  onLongPressDelete: () => void;
+  onDelete: () => void;
   cardWidth: string;
 }) {
   const [hasPreviewError, setHasPreviewError] = useState(false);
@@ -193,10 +254,20 @@ function EvidenceCard({
       accessibilityLabel={`Abrir evidencia ${getEvidenceDisplayName(evidence.nombre)}`}
       accessibilityRole="button"
       accessibilityState={selectable ? { selected } : undefined}
-      onLongPress={selectable && Platform.OS !== 'web' ? onLongPress : undefined}
+      onLongPress={canDelete && Platform.OS !== 'web' ? onLongPressDelete : selectable && Platform.OS !== 'web' ? onLongPress : undefined}
       onPress={onPress}
       style={({ pressed }) => [styles.card, { width: cardWidth }, selected && styles.cardSelected, pressed && styles.cardPressed]}
     >
+      {canDelete && (Platform.OS === 'web' || deleteSelected) ? (
+        <Pressable
+          accessibilityLabel={`Eliminar evidencia ${getEvidenceDisplayName(evidence.nombre)}`}
+          accessibilityRole="button"
+          onPress={(event) => { event.stopPropagation(); onDelete(); }}
+          style={styles.deleteEvidenceButton}
+        >
+          <Text style={styles.deleteEvidenceIcon}>🗑</Text>
+        </Pressable>
+      ) : null}
       {selectable && (Platform.OS === 'web' || selected) ? (
         <Pressable
           accessibilityRole="checkbox"
@@ -911,6 +982,18 @@ export async function downloadEvidenceFile(
   );
 }
 
+async function removeCachedEvidenceFile(taskId: number, evidence: TaskEvidence): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    const directory = new Directory(Paths.cache, CACHE_DIRECTORY);
+    const localName = `${taskId}-${evidence.nombre.replace(/[^\w.-]/g, '_')}`;
+    const target = new ExpoFile(directory, localName);
+    if (target.exists) target.delete();
+  } catch (error) {
+    console.warn('No fue posible limpiar la copia local de la evidencia eliminada.', error);
+  }
+}
+
 export async function saveEvidenceToDevice(file: ExpoFile): Promise<void> {
   const isAvailable = await MediaLibrary.isAvailableAsync();
   if (!isAvailable) throw new Error('media-library-unavailable');
@@ -1048,6 +1131,18 @@ const styles = StyleSheet.create({
   selectionMarkSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
   selectionMarkText: { color: colors.white, fontSize: 15, fontWeight: '800' },
   selectionMarkTextSelected: { color: colors.white },
+  deleteEvidenceButton: { alignItems: 'center', backgroundColor: colors.white, borderColor: colors.border, borderRadius: 18, borderWidth: 1, elevation: 4, height: 36, justifyContent: 'center', position: 'absolute', right: 8, top: 8, width: 36, zIndex: 4 },
+  deleteEvidenceIcon: { color: colors.primary, fontSize: 18 },
+  deleteModalBackdrop: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.48)', flex: 1, justifyContent: 'center', padding: spacing.large },
+  deleteModalCard: { backgroundColor: colors.white, borderRadius: radius.large, gap: spacing.medium, maxWidth: 440, padding: spacing.large, width: '100%' },
+  deleteModalTitle: { color: colors.text, fontSize: typography.heading, fontWeight: '800' },
+  deleteModalMessage: { color: colors.textMuted, fontSize: typography.body, lineHeight: 22 },
+  deleteModalError: { color: colors.primary, fontSize: typography.small, fontWeight: '700' },
+  deleteModalActions: { flexDirection: 'row', gap: spacing.small, justifyContent: 'flex-end', marginTop: spacing.small },
+  deleteCancelButton: { alignItems: 'center', borderColor: colors.border, borderRadius: radius.medium, borderWidth: 1, justifyContent: 'center', minHeight: 44, paddingHorizontal: spacing.medium },
+  deleteCancelText: { color: colors.text, fontSize: typography.small, fontWeight: '700' },
+  deleteConfirmButton: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: radius.medium, justifyContent: 'center', minHeight: 44, minWidth: 100, paddingHorizontal: spacing.medium },
+  deleteConfirmText: { color: colors.white, fontSize: typography.small, fontWeight: '800' },
   cardPressed: {
     opacity: 0.82,
   },

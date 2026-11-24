@@ -23,6 +23,7 @@ import { tareasService } from '../services/tareasService';
 import { colors, radius, spacing, typography } from '../theme';
 import type {
   OperatorTask,
+  TaskEvidence,
   TaskEvidenceAsset,
   TaskStatus,
 } from '../types/tarea';
@@ -177,6 +178,15 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
       setActionError(
         getApiErrorMessage(error, 'No fue posible actualizar el estado de la tarea.'),
       );
+    },
+  });
+
+  const deleteEvidenceMutation = useMutation({
+    mutationFn: ({ taskId, nombre }: { taskId: number; nombre: string }) =>
+      tareasService.deleteEvidence(taskId, nombre),
+    onSuccess: async (task) => {
+      queryClient.setQueryData(['tarea', task.id], task);
+      await queryClient.invalidateQueries({ queryKey: ['tareas'] });
     },
   });
 
@@ -344,6 +354,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
             actionError={actionError}
             actionSuccess={actionSuccess}
             canManageEvidence={canManageEvidence}
+            onDeleteEvidence={(evidence) => deleteEvidenceMutation.mutateAsync({ taskId: task.id, nombre: evidence.nombre })}
             onAttach={() => setIsSourcePickerVisible(true)}
             onRemoveAsset={removeAsset}
             onUpload={() => uploadMutation.mutate()}
@@ -540,6 +551,7 @@ function TaskDetail({
   actionError,
   actionSuccess,
   canManageEvidence,
+  onDeleteEvidence,
   onAttach,
   onRemoveAsset,
   onUpload,
@@ -554,6 +566,7 @@ function TaskDetail({
   actionError: string | null;
   actionSuccess: string | null;
   canManageEvidence: boolean;
+  onDeleteEvidence: (evidence: TaskEvidence) => Promise<unknown>;
   onAttach: () => void;
   onRemoveAsset: (uri: string) => void;
   onUpload: () => void;
@@ -635,7 +648,13 @@ function TaskDetail({
           </View>
         ) : null}
 
-        <EvidenceGallery emptyMessage="Aún no has enviado evidencias para esta tarea." evidences={task.evidencias} taskId={task.id} />
+        <EvidenceGallery
+          canDeleteEvidence={!['CERRADO', 'CERRADA'].includes(task.estado.toUpperCase())}
+          emptyMessage="Aún no has enviado evidencias para esta tarea."
+          evidences={task.evidencias}
+          onDeleteEvidence={onDeleteEvidence}
+          taskId={task.id}
+        />
 
         {selectedAssets.length ? (
           <View style={styles.selectedEvidence}>

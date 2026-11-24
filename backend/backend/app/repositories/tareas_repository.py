@@ -376,6 +376,34 @@ _APPEND_EVIDENCES = text(
     """
 )
 
+_DELETE_EVIDENCE = text(
+    f"""
+    UPDATE "DW_OPERACIONAL".tareas_operador
+    SET evidencias = jsonb_set(
+            COALESCE(evidencias, '{{"evidencias": []}}'::jsonb),
+            '{{evidencias}}',
+            COALESCE((
+                SELECT jsonb_agg(item.value ORDER BY item.ordinality)
+                FROM jsonb_array_elements(
+                    COALESCE(evidencias->'evidencias', '[]'::jsonb)
+                ) WITH ORDINALITY AS item(value, ordinality)
+                WHERE item.value->>'nombre' <> :nombre
+            ), '[]'::jsonb),
+            true
+        ),
+        estado = CASE WHEN estado = 'COMPLETADA' THEN 'EN_PROCESO' ELSE estado END
+    WHERE id = :tarea_id
+      AND operador_id = :operador_id
+      AND estado IN ('PENDIENTE', 'EN_PROCESO', 'COMPLETADA')
+      AND EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(COALESCE(evidencias->'evidencias', '[]'::jsonb)) AS item(value)
+          WHERE item.value->>'nombre' = :nombre
+      )
+    RETURNING {_TASK_COLUMNS}
+    """
+)
+
 _UPDATE_STATE = text(
     f"""
     UPDATE "DW_OPERACIONAL".tareas_operador
@@ -595,6 +623,23 @@ class TareasRepository:
                 "image_count": sum(item.get("tipo") == "image" for item in evidencias),
                 "video_count": sum(item.get("tipo") == "video" for item in evidencias),
             },
+        )
+        task = result.mappings().one_or_none()
+        if task is not None:
+            db.commit()
+        return task
+
+    def delete_evidence(
+        self,
+        db: Session,
+        *,
+        tarea_id: int,
+        operador_id: int,
+        nombre: str,
+    ) -> Mapping[str, Any] | None:
+        result = db.execute(
+            _DELETE_EVIDENCE,
+            {"tarea_id": tarea_id, "operador_id": operador_id, "nombre": nombre},
         )
         task = result.mappings().one_or_none()
         if task is not None:

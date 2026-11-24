@@ -220,6 +220,31 @@ class EvidenceCache:
             bypass_path=source,
         )
 
+    def invalidate_source(self, source: Path) -> None:
+        """Remove cached derivatives for a source file before it is deleted."""
+        try:
+            stat = source.stat()
+        except OSError:
+            return
+        key = self._cache_key(source, stat)
+        for directory in (self.thumbnails_dir, self.originals_dir, self.videos_dir):
+            if not directory.is_dir():
+                continue
+            for cached_path in directory.glob(f"{key}.*"):
+                try:
+                    cached_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Could not invalidate cached evidence file %s.", cached_path.name)
+        if self.stream_grants_dir.is_dir():
+            for grant_path in self.stream_grants_dir.glob("*.json"):
+                try:
+                    with grant_path.open("r", encoding="utf-8") as stream:
+                        grant = json.load(stream)
+                    if grant.get("filename") == source.name:
+                        grant_path.unlink(missing_ok=True)
+                except (OSError, AttributeError, json.JSONDecodeError):
+                    continue
+
     def issue_video_stream_grant(
         self,
         *,

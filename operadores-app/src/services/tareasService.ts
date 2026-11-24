@@ -134,6 +134,13 @@ export const tareasService = {
     return response.data;
   },
 
+  async deleteEvidence(taskId: number, nombre: string): Promise<OperatorTask> {
+    const response = await httpClient.delete<OperatorTask>(
+      `/tareas/${taskId}/evidencias/${encodeURIComponent(nombre)}`,
+    );
+    return response.data;
+  },
+
   async updateStatus(taskId: number, estado: TaskStatus): Promise<OperatorTask> {
     const response = await httpClient.patch<OperatorTask>(
       `/tareas/${taskId}/estado`,
