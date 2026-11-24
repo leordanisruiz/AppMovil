@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import Constants from 'expo-constants';
+import * as Network from 'expo-network';
 import {
   ActivityIndicator,
   Animated,
@@ -35,6 +36,7 @@ import {
   type TaskNotificationDestination,
 } from '../services/notificationService';
 import { registerDeviceForPushNotifications } from '../services/pushTokenService';
+import { flushEvidenceQueue } from '../services/evidenceUploadQueue';
 import { novedadesService } from '../services/novedadesService';
 import type { CategoriaNovedad, Novedad, NovedadesResumen } from '../types/novedad';
 import { useAuth } from '../store/AuthProvider';
@@ -218,6 +220,50 @@ export function HomeScreen() {
       subscription.remove();
     };
   }, [canRegisterPush, canViewNovelties, operatorCode, registerPush]);
+
+  useEffect(() => {
+    const ownerIdentification = operator?.identificacion;
+    if (!ownerIdentification || Platform.OS === 'web') return undefined;
+    let active = true;
+    let flushing = false;
+    const flushWhenOnline = async () => {
+      if (!active || flushing || AppState.currentState !== 'active') return;
+      flushing = true;
+      try {
+        const network = await Network.getNetworkStateAsync();
+        if (network.isConnected && network.isInternetReachable !== false) {
+          const uploadedTaskIds = await flushEvidenceQueue(ownerIdentification);
+          if (uploadedTaskIds.length) {
+            await Promise.all(uploadedTaskIds.map((taskId) =>
+              queryClient.invalidateQueries({ queryKey: ['tarea', taskId] }),
+            ));
+            await queryClient.invalidateQueries({ queryKey: ['tareas'] });
+          }
+        }
+      } catch (error) {
+        console.warn('No se pudo reintentar la cola de evidencias:', error);
+      } finally {
+        flushing = false;
+      }
+    };
+    const networkSubscription = Network.addNetworkStateListener((network) => {
+      if (network.isConnected && network.isInternetReachable !== false) {
+        void flushWhenOnline();
+      }
+    });
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void flushWhenOnline();
+    });
+    const initialCheck = setTimeout(() => void flushWhenOnline(), 0);
+    const retryInterval = setInterval(() => void flushWhenOnline(), 30_000);
+    return () => {
+      active = false;
+      clearTimeout(initialCheck);
+      clearInterval(retryInterval);
+      networkSubscription.remove();
+      appStateSubscription.remove();
+    };
+  }, [operator?.identificacion]);
 
 
   useEffect(() => {

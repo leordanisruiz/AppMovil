@@ -301,6 +301,7 @@ def subir_evidencias(
     captured_at: list[datetime] = Form(...),
     latitude: list[float] = Form(...),
     longitude: list[float] = Form(...),
+    upload_id: list[str] | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> TareaEvidenciasResponse:
     tipo_documento, identificacion = _authenticated_identity(request)
@@ -313,6 +314,7 @@ def subir_evidencias(
         captured_at=captured_at,
         latitude=latitude,
         longitude=longitude,
+        upload_ids=upload_id,
     )
     return TareaEvidenciasResponse(
         tarea=task,

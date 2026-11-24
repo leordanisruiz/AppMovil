@@ -13,6 +13,7 @@ export type TaskEvidence = {
   fecha_captura?: string | null;
   ubicacion?: string | null;
   duracion_segundos?: number | null;
+  client_id?: string | null;
 };
 
 export type OperatorTask = {
@@ -86,4 +87,5 @@ export type TaskEvidenceAsset = {
   latitude: number;
   longitude: number;
   webFile?: Blob;
+  clientUploadId?: string;
 };
