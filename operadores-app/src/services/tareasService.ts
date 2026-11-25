@@ -103,6 +103,7 @@ export const tareasService = {
   async uploadEvidence(
     taskId: number,
     assets: TaskEvidenceAsset[],
+    timeout = 7_200_000,
   ): Promise<UploadEvidenceResponse> {
     const formData = new FormData() as NativeFormData;
     for (const asset of assets) {
@@ -121,6 +122,7 @@ export const tareasService = {
       formData.append('captured_at', asset.capturedAt);
       formData.append('latitude', String(asset.latitude));
       formData.append('longitude', String(asset.longitude));
+      if (asset.clientUploadId) formData.append('upload_id', asset.clientUploadId);
     }
 
     const response = await httpClient.post<UploadEvidenceResponse>(
@@ -128,7 +130,7 @@ export const tareasService = {
       formData,
       {
         headers: Platform.OS === 'web' ? undefined : { 'Content-Type': 'multipart/form-data' },
-        timeout: 7_200_000,
+        timeout,
       },
     );
     return response.data;

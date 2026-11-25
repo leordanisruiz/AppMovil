@@ -25,6 +25,7 @@ class Evidencia(BaseModel):
     fecha_captura: datetime | None = None
     ubicacion: str | None = None
     duracion_segundos: float | None = Field(default=None, ge=0)
+    client_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class EvidenciaSeleccionada(BaseModel):

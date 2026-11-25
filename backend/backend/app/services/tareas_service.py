@@ -515,6 +515,7 @@ class TareasService:
         captured_at: list[datetime],
         latitude: list[float],
         longitude: list[float],
+        upload_ids: list[str] | None = None,
     ) -> tuple[TareaResponse, int]:
         operador_id = self._get_authenticated_operator_id(
             db,
@@ -531,11 +532,6 @@ class TareasService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="La tarea no existe o no está asignada a este operador.",
             )
-        if current_task["estado"] in {"COMPLETADA", "CERRADO"}:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="No se pueden agregar evidencias a una tarea cerrada o completada.",
-            )
         if not files:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -545,6 +541,14 @@ class TareasService:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Cada evidencia debe incluir fecha, hora y ubicación de captura.",
+            )
+        if upload_ids is not None and (
+            len(upload_ids) != len(files)
+            or any(not value.strip() or len(value) > 100 for value in upload_ids)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cada evidencia debe incluir un identificador de subida válido.",
             )
         if any(
             not math.isfinite(lat) or not math.isfinite(lon)
@@ -561,6 +565,23 @@ class TareasService:
                 detail=f"Puede adjuntar máximo {MAX_EVIDENCE_FILES} archivos por envío.",
             )
         existing = current_task.get("evidencias") or []
+        existing_upload_ids = {
+            str(item.get("client_id")) for item in existing if item.get("client_id")
+        }
+        if upload_ids is not None:
+            new_indexes = [index for index, value in enumerate(upload_ids) if value not in existing_upload_ids]
+            if not new_indexes:
+                return _to_task_response(current_task), 0
+            files = [files[index] for index in new_indexes]
+            captured_at = [captured_at[index] for index in new_indexes]
+            latitude = [latitude[index] for index in new_indexes]
+            longitude = [longitude[index] for index in new_indexes]
+            upload_ids = [upload_ids[index] for index in new_indexes]
+        if current_task["estado"] in {"COMPLETADA", "CERRADO"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No se pueden agregar evidencias a una tarea cerrada o completada.",
+            )
         existing_images = sum(item.get("tipo") == "image" for item in existing)
         existing_videos = sum(item.get("tipo") == "video" for item in existing)
         incoming_images = sum((file.content_type or "").startswith("image/") for file in files)
@@ -705,6 +726,7 @@ class TareasService:
                             f"latitud {Decimal(str(latitude[index])):f}"
                         ),
                         "tipo": media_type,
+                        **({"client_id": upload_ids[index]} if upload_ids is not None else {}),
                         **(
                             {"duracion_segundos": round(video_duration_seconds, 2)}
                             if video_duration_seconds is not None
@@ -729,6 +751,18 @@ class TareasService:
                     db, tarea_id=tarea_id, operador_id=operador_id
                 )
                 latest_evidence = latest_task.get("evidencias", []) if latest_task else []
+                if upload_ids is not None and latest_task is not None:
+                    latest_upload_ids = {
+                        str(item.get("client_id"))
+                        for item in latest_evidence
+                        if item.get("client_id")
+                    }
+                    if set(upload_ids).issubset(latest_upload_ids):
+                        for path in final_paths:
+                            get_evidence_cache().invalidate_source(path)
+                        _remove_files(final_paths)
+                        final_paths.clear()
+                        return _to_task_response(latest_task), 0
                 latest_images = sum(item.get("tipo") == "image" for item in latest_evidence)
                 latest_videos = sum(item.get("tipo") == "video" for item in latest_evidence)
                 if latest_images + incoming_images > MAX_EVIDENCE_IMAGES:

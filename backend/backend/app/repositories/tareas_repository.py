@@ -362,6 +362,15 @@ _APPEND_EVIDENCES = text(
     WHERE id = :tarea_id
       AND operador_id = :operador_id
       AND estado NOT IN ('COMPLETADA', 'CERRADO')
+      AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(
+              COALESCE(evidencias->'evidencias', '[]'::jsonb)
+          ) AS saved(value)
+          JOIN jsonb_array_elements(CAST(:evidencias AS jsonb)) AS incoming(value)
+            ON incoming.value ? 'client_id'
+           AND saved.value->>'client_id' = incoming.value->>'client_id'
+      )
       AND (
           SELECT COUNT(*)
           FROM jsonb_array_elements(COALESCE(evidencias->'evidencias', '[]'::jsonb)) AS item(value)

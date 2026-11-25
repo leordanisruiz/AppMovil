@@ -19,6 +19,13 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getApiErrorMessage } from '../services/authService';
 import { captureNativeEvidence } from '../services/nativeEvidenceCapture';
+import {
+  enqueueEvidence,
+  flushEvidenceQueue,
+  getQueuedEvidence,
+  retryBlockedEvidence,
+  type QueuedEvidence,
+} from '../services/evidenceUploadQueue';
 import { tareasService } from '../services/tareasService';
 import { colors, radius, spacing, typography } from '../theme';
 import type {
@@ -130,28 +137,77 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
     enabled: selectedTaskId !== null,
     staleTime: 0,
   });
+  const queuedEvidenceQuery = useQuery({
+    queryKey: ['evidence-upload-queue', selectedTaskId],
+    queryFn: () => getQueuedEvidence(selectedTaskId ?? undefined),
+    enabled: selectedTaskId !== null && Platform.OS !== 'web',
+    refetchInterval: 2_000,
+  });
+  const selectedOwnerIdentification = operator?.identificacion ?? '';
 
   const uploadMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (selectedTaskId === null) {
         throw new Error('Selecciona una tarea antes de subir evidencias.');
       }
-      return tareasService.uploadEvidence(selectedTaskId, selectedAssets);
+      if (Platform.OS === 'web') {
+        return {
+          kind: 'web' as const,
+          result: await tareasService.uploadEvidence(selectedTaskId, selectedAssets),
+        };
+      }
+      if (!selectedOwnerIdentification) {
+        throw new Error('No se pudo identificar al operador para guardar la evidencia en cola.');
+      }
+      await enqueueEvidence(selectedTaskId, selectedOwnerIdentification, selectedAssets);
+      let uploadedTaskIds: number[] = [];
+      try {
+        uploadedTaskIds = await flushEvidenceQueue(selectedOwnerIdentification);
+      } catch (error) {
+        // The files and capture metadata are already durable; network-state
+        // detection must never make the user re-enqueue the same evidence.
+        console.warn('La evidencia quedó en cola; no se pudo iniciar la sincronización:', error);
+      }
+      return { kind: 'native' as const, uploaded: uploadedTaskIds.includes(selectedTaskId) };
     },
-    onSuccess: async ({ tarea, evidencias_agregadas }) => {
-      queryClient.setQueryData(['tarea', tarea.id], tarea);
-      await queryClient.invalidateQueries({ queryKey: ['tareas'] });
-      selectedAssets.forEach(releaseWebAsset);
-      setSelectedAssets([]);
-      const uploadedEvidence = tarea.evidencias.slice(-evidencias_agregadas);
-      const missingLocation = uploadedEvidence.length !== evidencias_agregadas
-        || uploadedEvidence.some((evidence) => !evidence.ubicacion);
-      setActionError(missingLocation
-        ? 'La API confirmó la carga, pero no devolvió la ubicación de las evidencias. No las vuelvas a subir; verifica que la web esté conectada al backend actualizado.'
-        : null);
-      setActionSuccess(missingLocation
-        ? null
-        : `${evidencias_agregadas} evidencia${evidencias_agregadas === 1 ? '' : 's'} subida${evidencias_agregadas === 1 ? '' : 's'}. La tarea está en proceso.`);
+    onSuccess: async (result) => {
+      if (result.kind === 'web') {
+        const { tarea, evidencias_agregadas } = result.result;
+        queryClient.setQueryData(['tarea', tarea.id], tarea);
+        await queryClient.invalidateQueries({ queryKey: ['tareas'] });
+        const uploadedEvidence = tarea.evidencias.slice(-evidencias_agregadas);
+        const missingLocation = uploadedEvidence.length !== evidencias_agregadas
+          || uploadedEvidence.some((evidence) => !evidence.ubicacion);
+        setActionError(missingLocation
+          ? 'La API confirmó la carga, pero no devolvió la ubicación de las evidencias. No las vuelvas a subir; verifica que la web esté conectada al backend actualizado.'
+          : null);
+        setActionSuccess(missingLocation
+          ? null
+          : `${evidencias_agregadas} evidencia${evidencias_agregadas === 1 ? '' : 's'} subida${evidencias_agregadas === 1 ? '' : 's'}. La tarea está en proceso.`);
+      } else {
+        await queryClient.invalidateQueries({ queryKey: ['evidence-upload-queue', selectedTaskId] });
+        await queryClient.invalidateQueries({ queryKey: ['tarea', selectedTaskId] });
+        await queryClient.invalidateQueries({ queryKey: ['tareas'] });
+        selectedAssets.forEach(releaseWebAsset);
+        setSelectedAssets([]);
+        let stillQueued: QueuedEvidence[] = [];
+        try {
+          stillQueued = await getQueuedEvidence(selectedTaskId ?? undefined);
+        } catch (error) {
+          console.warn('No se pudo consultar el estado local de la cola:', error);
+          setActionError(null);
+          setActionSuccess('La evidencia quedó guardada en este dispositivo. Se intentará subir cuando haya conexión.');
+          return;
+        }
+        setActionError(stillQueued.find((item) => item.blockedMessage)?.blockedMessage ?? null);
+        setActionSuccess(stillQueued.length
+          ? `${stillQueued.length} evidencia${stillQueued.length === 1 ? '' : 's'} guardada${stillQueued.length === 1 ? '' : 's'} en cola. Se subirán automáticamente cuando haya conexión.`
+          : 'Evidencias subidas correctamente. La tarea está en proceso.');
+      }
+      if (result.kind === 'web') {
+        selectedAssets.forEach(releaseWebAsset);
+        setSelectedAssets([]);
+      }
     },
     onError: (error: unknown) => {
       setActionError(
@@ -348,6 +404,7 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
             task={task}
             operatorCode={operatorCode}
             selectedAssets={selectedAssets}
+            queuedEvidence={queuedEvidenceQuery.data ?? []}
             preparingEvidence={preparingEvidence}
             isUploading={uploadMutation.isPending}
             isUpdatingStatus={statusMutation.isPending}
@@ -358,7 +415,27 @@ export function TasksSection({ operatorCode, initialStatusFilter = 'TODAS' }: Ta
             onAttach={() => setIsSourcePickerVisible(true)}
             onRemoveAsset={removeAsset}
             onUpload={() => uploadMutation.mutate()}
+            onRetryQueued={async () => {
+              if (selectedTaskId === null || !selectedOwnerIdentification) return;
+              setActionError(null);
+              await retryBlockedEvidence(selectedTaskId);
+              const uploadedTaskIds = await flushEvidenceQueue(selectedOwnerIdentification);
+              await queryClient.invalidateQueries({ queryKey: ['evidence-upload-queue', selectedTaskId] });
+              if (uploadedTaskIds.includes(selectedTaskId)) {
+                await queryClient.invalidateQueries({ queryKey: ['tarea', selectedTaskId] });
+                await queryClient.invalidateQueries({ queryKey: ['tareas'] });
+              }
+              const remaining = await getQueuedEvidence(selectedTaskId);
+              setActionError(remaining.find((item) => item.blockedMessage)?.blockedMessage ?? null);
+              setActionSuccess(remaining.length
+                ? 'La evidencia sigue guardada en este dispositivo y se reintentará al recuperar conexión.'
+                : 'Evidencias pendientes subidas correctamente.');
+            }}
             onComplete={() => {
+              if ((queuedEvidenceQuery.data?.length ?? 0) > 0) {
+                setCompletionWarning('Hay evidencias pendientes de subir. Espera a que se complete la sincronización antes de marcar la tarea como completada.');
+                return;
+              }
               const photos = task.evidencias.filter((item) => item.tipo === 'image').length;
               const videos = task.evidencias.filter((item) => item.tipo === 'video').length;
               if (photos < MAX_PHOTOS_PER_TASK || videos < MAX_VIDEOS_PER_TASK) {
@@ -545,6 +622,7 @@ function TaskDetail({
   task,
   operatorCode,
   selectedAssets,
+  queuedEvidence,
   preparingEvidence,
   isUploading,
   isUpdatingStatus,
@@ -555,11 +633,13 @@ function TaskDetail({
   onAttach,
   onRemoveAsset,
   onUpload,
+  onRetryQueued,
   onComplete,
 }: {
   task: OperatorTask;
   operatorCode: string;
   selectedAssets: TaskEvidenceAsset[];
+  queuedEvidence: QueuedEvidence[];
   preparingEvidence: 'photo' | 'video' | null;
   isUploading: boolean;
   isUpdatingStatus: boolean;
@@ -570,6 +650,7 @@ function TaskDetail({
   onAttach: () => void;
   onRemoveAsset: (uri: string) => void;
   onUpload: () => void;
+  onRetryQueued: () => void;
   onComplete: () => void;
 }) {
   const canAttach =
@@ -655,6 +736,29 @@ function TaskDetail({
           onDeleteEvidence={onDeleteEvidence}
           taskId={task.id}
         />
+
+        {queuedEvidence.length > 0 ? (
+          <View style={styles.selectedEvidence}>
+            <Text style={styles.cardLabel}>PENDIENTES DE SINCRONIZAR ({queuedEvidence.length})</Text>
+            <Text style={styles.evidenceHint}>
+              Están guardadas en este dispositivo con su fecha y ubicación de captura. Se subirán al recuperar conexión.
+            </Text>
+            {queuedEvidence.map((item) => (
+              <View key={item.uploadId} style={styles.queuedEvidenceRow}>
+                <Text numberOfLines={1} style={styles.queuedEvidenceName}>{item.name}</Text>
+                <Text style={styles.queuedEvidenceStatus}>
+                  {item.blockedMessage ? 'Requiere revisión' : 'En cola'}
+                </Text>
+                {item.blockedMessage ? (
+                  <Text accessibilityRole="alert" style={styles.actionError}>{item.blockedMessage}</Text>
+                ) : null}
+              </View>
+            ))}
+            {queuedEvidence.some((item) => item.blockedMessage) ? (
+              <AppButton onPress={onRetryQueued} title="Reintentar evidencias" />
+            ) : null}
+          </View>
+        ) : null}
 
         {selectedAssets.length ? (
           <View style={styles.selectedEvidence}>
@@ -1232,6 +1336,24 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     gap: spacing.medium,
     paddingTop: spacing.medium,
+  },
+  queuedEvidenceRow: {
+    backgroundColor: '#F5F7FA',
+    borderColor: colors.border,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    gap: spacing.xsmall,
+    padding: spacing.small,
+  },
+  queuedEvidenceName: {
+    color: colors.text,
+    fontSize: typography.small,
+    fontWeight: '700',
+  },
+  queuedEvidenceStatus: {
+    color: '#1769AA',
+    fontSize: typography.overline,
+    fontWeight: '800',
   },
   previewGrid: {
     flexDirection: 'row',
